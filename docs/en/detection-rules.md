@@ -1,89 +1,100 @@
 # Detection rules
 
-The detector (`internal/detector/detector.go`) runs six rules against every
-**container** event (host events are ignored). Rules run **in the order below**
-and the **first match wins** — only one alert per event.
+The detector (`internal/detector/`) is **context-aware**: it judges each
+**container** event (host events are ignored) not only by the binary involved
+but by **who launched it (process ancestry)** and **with what arguments (argv)**.
+This is what separates real attacks from routine operations — the same `sh` or
+`curl` is benign from `cron` and a likely web-shell from `nginx`.
 
-- **exec rules** match on the exact process name (`comm`, lower-cased) from an
-  `execve` event.
-- **file rules** match on a **path prefix** of the filename from an `openat` event.
+Rules are declarative units (`internal/detector/rules.go`) built from reusable
+**lists** (`lists.go`). The engine (`detector.go`) runs **all** rules, applies
+operator **exceptions**, and de-duplicates by `(rule, container, pid)` within a
+short window. Each alert carries a rule id, severity, MITRE ATT&CK
+technique/tactic, tags, the parent/ancestry, and the command line.
 
-Each alert carries a severity and a MITRE ATT&CK technique (TTP) + tactic.
+## Enrichment behind the rules
 
----
+The collector traces 8 syscall tracepoints (execve, openat, connect, clone,
+ptrace, init_module, finit_module, bpf). For monitored container `execve`
+(and `ptrace`/module/`bpf`) events it resolves, in userspace (via `/proc`, like
+the existing cgroup lookup — no extra eBPF):
 
-## 1. Shell in container — `ruleShellInContainer`
+- **Ancestry** — the chain of parent process names (`/proc/<pid>/stat` →
+  `/proc/<ppid>/comm`), up to `KW_ANCESTRY_DEPTH` (default 5), immediate parent
+  first.
+- **Command line** — `/proc/<pid>/cmdline` (the executed argv).
+- **Container name/image** — resolved from the Docker socket, so alerts and
+  `KW_CONTAINER_*` filters use real names instead of short IDs.
 
-- **Trigger:** an `execve` whose process name is exactly one of
-  `sh`, `bash`, `zsh`, `fish`, `dash`, `ash`.
-- **Severity:** High · **MITRE:** T1059 (Execution).
-- **Why:** production containers should rarely, if ever, spawn an interactive
-  shell. A shell often signals a hands-on-keyboard intrusion or a `docker exec`
-  into a workload that shouldn't need one.
+## Lineage classification
 
-## 2. Privilege-escalation tool — `rulePrivilegedProcessInContainer`
+Each ancestry chain is classified using two lists (overridable via config):
 
-- **Trigger:** an `execve` named `sudo`, `su`, `nsenter`, `unshare`, `chroot`,
-  `capsh`, `setuid`, `newgrp`.
-- **Severity:** High · **MITRE:** T1548 (Privilege Escalation).
-- **Why:** these tools are used to gain higher privileges or break namespace
-  isolation; `nsenter`/`unshare` in particular are container-escape primitives.
-
-## 3. Sensitive-file access — `ruleSensitiveFileAccess`
-
-- **Trigger:** an `openat` whose path starts with one of
-  `/etc/shadow`, `/etc/passwd`, `/etc/sudoers`, `/root/.ssh`,
-  `/var/run/docker.sock`, `/.dockerenv`, `/proc/sysrq-trigger`, `/proc/kcore`.
-- **Severity:** Medium (T1005, Collection) — **escalated to Critical (T1611,
-  Privilege Escalation)** when the path is exactly `/var/run/docker.sock`.
-- **Why:** these files reveal credentials, host state or — in the case of the
-  Docker socket — a direct path to full host takeover from inside a container.
-
-## 4. Network recon tool — `ruleUnexpectedNetworkTool`
-
-- **Trigger:** an `execve` named `nmap`, `masscan`, `netcat`, `nc`, `ncat`,
-  `tcpdump`, `wireshark`, `tshark`, `curl`, `wget`.
-- **Severity:** Medium, **High** for `nmap`/`masscan` · **MITRE:** T1046 (Discovery).
-- **Why:** scanners/sniffers indicate lateral-movement reconnaissance; `curl`/`wget`
-  frequently appear in post-exploitation download chains.
-
-## 5. Package manager in a running container — `rulePackageManagerInContainer`
-
-- **Trigger:** an `execve` named `apt`, `apt-get`, `dpkg`, `yum`, `dnf`, `rpm`,
-  `apk`, `pip`, `pip3`, `npm`, `yarn`, `gem`.
-- **Severity:** Medium · **MITRE:** T1072 (Execution).
-- **Why:** installing packages at runtime is abnormal for immutable production
-  images and often means an attacker is pulling in tooling.
-
-## 6. Credential-file access — `ruleCredentialFileAccess`
-
-- **Trigger:** an `openat` whose path starts with one of
-  `/.env`, `/.aws/credentials`, `/.gcloud/credentials`, `/run/secrets`,
-  `/.kube/config`.
-- **Severity:** High · **MITRE:** T1552 (Credential Access).
-- **Why:** classic credential-harvesting targets — cloud keys, Kubernetes configs,
-  Docker secrets, app `.env` files.
+- **Trusted** (`KW_TRUSTED_PARENTS` + built-ins: `init`, `systemd`, `cron`,
+  `containerd-shim`, `runc`, `tini`, `dumb-init`, `s6-*`, `supervisord`, …) —
+  benign supervisors/schedulers/entrypoints.
+- **Network-facing** (`KW_NETWORK_PARENTS` + built-ins: `nginx`, `apache2`,
+  `httpd`, `php-fpm`, `php`, `node`, `python`, `java`, `ruby`, `puma`,
+  `gunicorn`, `mysqld`, `postgres`, `redis-server`, …) — internet-exposed
+  service runtimes. **Network-facing wins** when both appear in a chain.
 
 ---
 
-## Severity threshold
+## Rules
 
-Whether an alert is actually delivered also depends on `KW_ALERT_MIN_SEVERITY`
-(see [configuration.md](configuration.md)). With the default `medium`, `low`
-alerts would be suppressed — though none of the current rules emit `low`.
+| Rule id | Trigger | Lineage behaviour | Severity | MITRE |
+|---------|---------|-------------------|----------|-------|
+| `kernel_module_load` | `init_module`/`finit_module` from a container | n/a | **Critical** | T1547.006 Persistence |
+| `bpf_prog_load` | `bpf(BPF_PROG_LOAD)` from a container | n/a | High | T1562.001 Defense Evasion |
+| `process_injection` | `ptrace` with POKETEXT/POKEDATA/POKEUSR/SETREGS/ATTACH/SEIZE | n/a | High | T1055.008 Privilege Escalation |
+| `persistence` | **write-mode** open of cron/systemd/`ld.so.preload`/`authorized_keys`/`sudoers.d`/profile paths | n/a | High (Critical for `ld.so.preload`) | T1543 Persistence |
+| `reverse_shell` | `execve` cmdline matches a reverse-shell signature (`/dev/tcp/`, `/dev/udp/`, `nc -e`, `ncat -e`, `pty.spawn`, `socket.socket`, or `curl/wget … \| sh`) | always fires (never benign) | **Critical** | T1059 Execution |
+| `shell_in_container` | `execve` of `sh`/`bash`/`zsh`/`fish`/`dash`/`ash`/`ksh`/`tcsh` | network → **Critical** (RCE/web-shell); trusted → **suppressed**; unknown → High | High→Critical | T1059 Execution |
+| `privilege_escalation` | `execve` of `sudo`/`su`/`nsenter`/`unshare`/`chroot`/`capsh`/`setuid`/`newgrp` | network → **Critical**; trusted → suppressed; unknown → High | High→Critical | T1548 Privilege Escalation |
+| `network_tool` | `execve` of `nmap`/`masscan`/`nc`/`ncat`/`netcat`/`socat`/`curl`/`wget`/`tcpdump`/… | network → **High**; trusted → **suppressed**; unknown → Medium (High for `nmap`/`masscan`) | Medium→High | T1046 Discovery |
+| `container_drift` | `execve` of a binary under `/tmp`, `/dev/shm`, `/var/tmp`, `/run` | n/a | High | T1036 Defense Evasion |
+| `package_manager` | `execve` of `apt`/`apt-get`/`dpkg`/`yum`/`dnf`/`apk`/`pip`/`npm`/… | network → **High**; trusted → suppressed; unknown → Medium | Medium→High | T1072 Execution |
+| `sensitive_file` | `openat` path-prefix of `/etc/shadow`, `/root/.ssh`, `/var/run/docker.sock`, … | n/a | Medium (Critical for docker.sock → T1611) | T1005 Collection |
+| `credential_file` | `openat` path-prefix of `/.env`, `/.aws/credentials`, `/run/secrets`, `/.kube/config`, … | n/a | High | T1552 Credential Access |
 
-## Known matching limitations
+The decisive change: `shell_in_container`, `network_tool`, `package_manager`,
+and `privilege_escalation` are **suppressed** for trusted lineage (killing the
+scheduler/healthcheck/autoheal noise) and **escalated** for network-facing
+lineage (catching real RCE/web-shells).
 
-- **Exact-name matching** means a renamed binary (e.g. `bash` copied to `xyz`)
-  evades exec rules. Argument inspection is not yet implemented.
-- **Prefix matching on the in-container path**: the filename is whatever the
-  container passed to the syscall, which may be relative or differ from the host
-  view; tighten paths cautiously.
-- **First-match-only**: an event that satisfies two rules reports only the first in
-  detector order. This keeps alerts de-duplicated but means rule ordering matters.
+---
+
+## Operational modes & tuning
+
+- **`KW_MODE`** — `alert` (default) dispatches; `monitor` is a dry-run that
+  evaluates and logs but never calls webhook/Slack. Use `monitor` for a safe
+  rollout/tuning period on a new host.
+- **`KW_DETECTION_EXCEPTIONS`** — comma-separated substrings; an alert is
+  suppressed if any appears in the container name, image, command line, or
+  ancestry. The escape hatch for residual false positives.
+- **`KW_ALERT_MIN_SEVERITY`** still gates delivery (see
+  [configuration.md](configuration.md)).
+
+## Known limitations
+
+- **argv/ancestry race** — an ultra-short-lived process may exit before `/proc`
+  is read; rules then fall back to the binary path only.
+- **List-based binary matching** — a renamed shell still evades the binary
+  lists, but `container_drift` and `reverse_shell` (argv-based) provide
+  independent coverage.
+- **`container_drift`** currently flags writable-path execution only;
+  argv[0] masquerade and image-manifest comparison are deferred (would
+  false-positive on login shells / busybox).
 
 ## Adding a rule
 
-Implement a `func(collector.Event) *alerter.Alert`, returning `nil` when it does
-not apply, and register it in `New()`'s slice. See
-[development.md](development.md) for a worked example.
+Add a `Rule` value in `internal/detector/rules.go` (id, severity, MITRE, tags,
+and a `Match` func returning a `*hit` or `nil`) and register it in
+`defaultRules()`. Add a table case to `detector_test.go`. See
+[development.md](development.md).
+
+## Roadmap
+
+A **behavioural-anomaly engine** (STIDE / n-gram syscall-sequence baselining per
+workload) is planned to complement these signatures and catch unknown attacks —
+see [roadmap.md](roadmap.md).

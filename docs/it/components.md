@@ -35,7 +35,7 @@ tag `//go:build ignore` così che la toolchain Go lo salti durante le build norm
   [architecture.md](architecture.md)).
 - Dichiara la mappa ring-buffer `events` (`BPF_MAP_TYPE_RINGBUF`, `max_entries =
   1<<24` = 16 MB).
-- `fill_common(e, type)` — popola PID/PPID/UID/tipo/timestamp/`comm` per ogni evento
+- `fill_common(e, type)` — popola PID/TID/UID/tipo/timestamp/`comm` per ogni evento
   usando `bpf_get_current_pid_tgid`, `bpf_get_current_uid_gid`, `bpf_ktime_get_ns`,
   `bpf_get_current_comm`.
 - Quattro programmi tracepoint:
@@ -151,14 +151,17 @@ d'ambiente `KW_*`. Non esistono file di configurazione.
 **Ruolo:** Formattare e smistare gli alert; applicare soglia di severità e rate limit.
 
 - Costanti `Severity` + `severityRank` per i confronti di soglia.
-- `Alert` — il payload dell'alert serializzabile in JSON (id, server, timestamp,
-  severità, id/nome container, immagine, syscall, pid, processo, reason, details,
-  MITRE TTP/tactic).
-- `Alerter` — config, handle del file di log, client HTTP (timeout 5 s) e stato del
-  rate-limit per container.
-- `New(cfg)` — apre/crea il file di log e la sua directory quando il logging è abilitato.
-- `Send(alert)` — filtro severità → rate limit → marcatura server/timestamp →
-  smistamento a log (sincrono) + webhook + Slack (ciascuno in una goroutine).
+- `Alert` — il payload dell'alert serializzabile in JSON (id, rule id, server,
+  timestamp, severità, id/nome container, immagine, syscall, pid, processo,
+  **parent/genealogia, cmdline**, reason, details, MITRE TTP/tactic, tag).
+- `AlertSink` — interfaccia opzionale di persistenza (`Save(*Alert)`), implementata
+  da `internal/storage`; iniettata da `main` così l'alerter evita un ciclo di import.
+- `Alerter` — config, handle del file di log, client HTTP (timeout 5 s), sink
+  opzionale e stato del rate-limit per container.
+- `New(cfg, sink)` — apre/crea il file di log; `sink` può essere nil (DB disabilitato).
+- `Send(alert)` — filtro severità → rate limit → marcatura server/timestamp → log
+  (sincrono) → **persistenza via sink** → (solo in modalità `alert`) goroutine
+  webhook + Slack. Persistenza e log girano anche in modalità `monitor` (dry-run).
 - `writeLog` — appende JSON delimitato da newline al file **e** emette un `slog.Warn`
   strutturato.
 - `sendWebhook` — invia JSON in POST; se `KW_WEBHOOK_SECRET` è impostato, aggiunge un
@@ -169,9 +172,22 @@ d'ambiente `KW_*`. Non esistono file di configurazione.
   della finestra, blocca se il conteggio raggiunge `AlertMaxRate`, altrimenti registra
   "adesso".
 
-> Nota: questo file ora importa il vero package `strings`. (Una versione precedente
-> aveva uno shim `strings` a livello di package che oscurava la libreria standard —
-> rimosso in fase di stabilizzazione.)
+---
+
+## `internal/storage/postgres.go`
+
+**Ruolo:** Salvare gli alert su TimescaleDB — un `AlertSink` asincrono e resiliente.
+
+- `Store` — canale bufferizzato (cap 2000) + un worker in background che raggruppa
+  (≤100 alert o ogni 2 s) e inserisce con un singolo `pgx.Batch`/`SendBatch`.
+- `Save(*Alert)` — **non bloccante**: accoda, oppure scarta-e-conta quando il buffer
+  è pieno, così l'event loop non viene mai bloccato da un DB lento/non raggiungibile.
+- `ensureSchema` — DDL idempotente (estensione, hypertable `alerts`, indici,
+  `add_retention_policy` da `KW_DB_RETENTION_DAYS`), ritentato finché il DB è pronto.
+- interfaccia `inserter` — astrae Postgres così la logica di buffering/batching è
+  testabile offline (senza un DB reale) in `postgres_test.go`.
+- `Close()` — svuota il buffer (timeout limitato) e chiude il pool.
+- Driver: `github.com/jackc/pgx/v5` (+ `pgxpool`); DSN da `Config.DSN()`.
 
 ---
 

@@ -16,6 +16,9 @@ everywhere and change only the `.env`. Copy `.env.example` to `.env` to start.
 | `KW_ALERT_RATE_WINDOW` | int (s) | `60` | Sliding-window length for rate limiting. |
 | `KW_LOG_ENABLED` | bool | `true` | Write alerts to the JSON log file. |
 | `KW_LOG_PATH` | string | `/var/log/kernelwatch/alerts.json` | Alert log path (directory auto-created). |
+| `KW_LOG_MAX_MB` | int | `50` | Rotate the alert log past this size; `0` disables rotation. |
+| `KW_LOG_MAX_BACKUPS` | int | `3` | Rotated backups to keep (`alerts.json.1…N`). |
+| `KW_HEALTH_FILE` | string | `/var/log/kernelwatch/health` | Heartbeat file written by the daemon and checked by `kernelwatch -health`. |
 | `KW_WEBHOOK_ENABLED` | bool | `false` | Enable webhook delivery. |
 | `KW_WEBHOOK_URL` | string | — | Webhook endpoint. **Required** if webhook enabled. |
 | `KW_WEBHOOK_SECRET` | string | — | HMAC-SHA256 signing key. If empty, requests are unsigned. |
@@ -24,7 +27,9 @@ everywhere and change only the `.env`. Copy `.env.example` to `.env` to start.
 | `KW_SLACK_CHANNEL` | string | `#security-alerts` | Slack channel. |
 | `KW_API_PORT` | int | `8080` | REST API port. Validated 1–65535. *(API not implemented yet.)* |
 | `KW_API_TOKEN` | string | — | Bearer token for the future API. |
-| `KW_EBPF_RINGBUF_SIZE` | int (bytes) | `16777216` (16 MB) | Ring-buffer size. *(Read into config but not yet applied at load — see roadmap.)* |
+| `KW_EBPF_RINGBUF_SIZE` | int (bytes) | `16777216` (16 MB) | Ring-buffer size, applied at eBPF load. Power of two, multiple of page size. Raise if `kernel_drops` climbs in the stats log. |
+| `KW_DB_ENABLED` | bool | `false` | Persist alerts to TimescaleDB. docker-compose sets it `true`. Best-effort: a down DB never blocks monitoring. |
+| `KW_DB_RETENTION_DAYS` | int | `90` | Auto-drop alerts older than N days (TimescaleDB retention). `0` = keep forever. |
 | `KW_DB_HOST` | string | `localhost` | TimescaleDB host. |
 | `KW_DB_PORT` | int | `5432` | TimescaleDB port. |
 | `KW_DB_NAME` | string | `kernelwatch` | Database name. |

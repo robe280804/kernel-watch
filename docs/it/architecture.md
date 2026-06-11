@@ -85,7 +85,7 @@ ordine dei campi, dimensioni e padding.
 | Campo C (`tracer.c`) | Campo Go (`RawEvent`) | Dim. | Note |
 |---|---|---|---|
 | `__u32 pid` | `PID uint32` | 4 | 32 bit alti di `pid_tgid` |
-| `__u32 ppid` | `PPID uint32` | 4 | 32 bit bassi di `pid_tgid` (vedi nota) |
+| `__u32 tid` | `TID uint32` | 4 | 32 bit bassi di `pid_tgid` — thread id (vedi nota) |
 | `__u32 uid` | `UID uint32` | 4 | |
 | `__u8 event_type` | `EventType uint8` | 1 | costante `EVENT_*` |
 | _(padding)_ | `_ [3]byte` | 3 | allinea il campo successivo |
@@ -96,10 +96,12 @@ ordine dei campi, dimensioni e padding.
 | `__u32 daddr` | `DAddr uint32` | 4 | IPv4, little-endian su x86 |
 | `__u64 timestamp_ns` | `TimestampNS uint64` | 8 | `bpf_ktime_get_ns()` |
 
-> **Nota su PID/PPID:** la funzione kernel `bpf_get_current_pid_tgid()` restituisce
-> `tgid<<32 | pid`. Il codice mappa la word alta su `PID` e quella bassa su `PPID`. La
-> word bassa è in realtà il *thread id* del kernel, non il PID del padre, quindi
-> "PPID" è una piccola imprecisione nell'implementazione attuale.
+> **Nota su PID/TID:** la funzione kernel `bpf_get_current_pid_tgid()` restituisce
+> `tgid<<32 | pid`. Il codice mappa la word alta su `PID` e quella bassa su `TID`
+> (il *thread id* del kernel — non il PID del padre). La vera genealogia dei
+> processi è risolta in userspace da `/proc/<pid>/stat` (vedi
+> `internal/container/parent.go` e [detection-rules.md](detection-rules.md)),
+> così il programma eBPF non legge puntatori al padre e resta CO-RE-free.
 
 Le costanti del tipo evento sono duplicate in due punti e devono restare sincronizzate:
 `EVENT_EXECVE/OPEN/CONNECT/CLONE` (1–4) in `tracer.c` e `EventExecve/Open/Connect/

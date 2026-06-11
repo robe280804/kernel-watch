@@ -34,7 +34,7 @@ Flow:
   [architecture.md](architecture.md)).
 - Declares the ring-buffer map `events` (`BPF_MAP_TYPE_RINGBUF`, `max_entries =
   1<<24` = 16 MB).
-- `fill_common(e, type)` — populates PID/PPID/UID/type/timestamp/`comm` for every
+- `fill_common(e, type)` — populates PID/TID/UID/type/timestamp/`comm` for every
   event using `bpf_get_current_pid_tgid`, `bpf_get_current_uid_gid`,
   `bpf_ktime_get_ns`, `bpf_get_current_comm`.
 - Four tracepoint programs:
@@ -146,13 +146,17 @@ variables. There are no config files.
 **Role:** Format and dispatch alerts; enforce severity threshold and rate limits.
 
 - `Severity` constants + `severityRank` for threshold comparisons.
-- `Alert` — the JSON-serialisable alert payload (id, server, timestamp, severity,
-  container id/name, image, syscall, pid, process, reason, details, MITRE TTP/tactic).
-- `Alerter` — config, log file handle, HTTP client (5 s timeout), and per-container
-  rate-limit state.
-- `New(cfg)` — opens/creates the log file and its directory when logging is enabled.
-- `Send(alert)` — severity filter → rate limit → stamp server/timestamp → dispatch
-  to log (sync) + webhook + Slack (each in a goroutine).
+- `Alert` — the JSON-serialisable alert payload (id, rule id, server, timestamp,
+  severity, container id/name, image, syscall, pid, process, **parent/ancestry,
+  cmdline**, reason, details, MITRE TTP/tactic, tags).
+- `AlertSink` — optional persistence interface (`Save(*Alert)`), implemented by
+  `internal/storage`; injected by `main` so the alerter avoids an import cycle.
+- `Alerter` — config, log file handle, HTTP client (5 s timeout), optional sink,
+  and per-container rate-limit state.
+- `New(cfg, sink)` — opens/creates the log file; `sink` may be nil (DB disabled).
+- `Send(alert)` — severity filter → rate limit → stamp server/timestamp → log
+  (sync) → **persist via sink** → (in `alert` mode only) webhook + Slack goroutines.
+  Persistence and logging also run in `monitor` (dry-run) mode.
 - `writeLog` — appends newline-delimited JSON to the file **and** emits a structured
   `slog.Warn`.
 - `sendWebhook` — POSTs JSON; if `KW_WEBHOOK_SECRET` is set, adds an
@@ -162,9 +166,22 @@ variables. There are no config files.
 - `isRateLimited(containerID)` — sliding window: evicts timestamps older than the
   window, blocks if the count reaches `AlertMaxRate`, else records "now".
 
-> Note: this file now imports the real `strings` package. (An earlier version had a
-> package-level `strings` shim shadowing the standard library — removed during
-> stabilization.)
+---
+
+## `internal/storage/postgres.go`
+
+**Role:** Persist alerts to TimescaleDB — an async, resilient `AlertSink`.
+
+- `Store` — buffered channel (cap 2000) + a background worker that batches
+  (≤100 alerts or every 2 s) and inserts via a single `pgx.Batch`/`SendBatch`.
+- `Save(*Alert)` — **non-blocking**: enqueues, or drops-and-counts when the buffer
+  is full, so the event loop is never stalled by a slow/down database.
+- `ensureSchema` — idempotent DDL (extension, `alerts` hypertable, indexes,
+  `add_retention_policy` from `KW_DB_RETENTION_DAYS`), retried until the DB is ready.
+- `inserter` interface — abstracts Postgres so the buffering/batching logic is
+  unit-tested offline (no real DB) in `postgres_test.go`.
+- `Close()` — drains/flushes the buffer (bounded timeout) and closes the pool.
+- Driver: `github.com/jackc/pgx/v5` (+ `pgxpool`); DSN from `Config.DSN()`.
 
 ---
 

@@ -2,12 +2,21 @@
 
 ## Roadmap (from the project README)
 
+- [x] Context-aware detection — process-lineage + argv + Docker enrichment
+  (Phase 1, see [detection-rules.md](detection-rules.md)).
+- [x] MITRE ATT&CK enrichment for all rules.
+- [x] Detection coverage beyond Execution — Persistence (cron/systemd/ld.so.preload
+  writes), process injection (`ptrace`), kernel-module & eBPF-program loads.
+- [ ] Remaining coverage — IPv6 `connect`, a connect-based C2 rule, and
+  attack-chain correlation (single alerts → incidents).
+- [x] TimescaleDB persistence of alerts — queryable history + retention
+  (`internal/storage`, `KW_DB_ENABLED`).
+- [ ] Behavioural-anomaly engine — STIDE / n-gram syscall-sequence baseline per
+  workload (Phase 2; learning mode + persisted profiles).
 - [ ] Static profiler — pre-deploy image analysis with `syft`.
-- [ ] Per-container behavioural baseline — ML autoencoder anomaly detection.
-- [ ] REST API + WebSocket dashboard.
-- [ ] TimescaleDB integration for event history.
+- [ ] REST API + WebSocket dashboard (query the stored alerts).
 - [ ] Kubernetes DaemonSet support.
-- [ ] MITRE ATT&CK enrichment for all rules.
+- [ ] Runtime enforcement (kill offending process, Tetragon-style).
 
 ## Stabilization fixes already applied
 
@@ -43,19 +52,20 @@ These were blocking a working build/run and have been fixed in-repo:
 |---|---|---|
 | REST API | Not implemented | `KW_API_PORT`/`KW_API_TOKEN` exist; no HTTP server or handlers. |
 | Dashboard (WebSocket) | Not implemented | Roadmap only. |
-| DB persistence | Not implemented | `Config.DSN()` ready; no connection, schema, or inserts. |
-| Docker enrichment | Stub | `dockerInspect()` always returns "not implemented"; name = short ID, image = empty. |
+| DB persistence | Done (alerts) | `internal/storage` writes alerts to a TimescaleDB hypertable (async, resilient) with retention. Raw-event storage still out of scope. |
+| Docker enrichment | Done | `internal/container/docker.go` resolves real name/image via the Docker socket; falls back to short ID if unreachable. |
 | Ring-buffer sizing | No-op | `KW_EBPF_RINGBUF_SIZE` is loaded but not applied at eBPF load. |
-| Tests | None | No `_test.go` files. |
+| Tests | Present | Table-driven rule tests in `internal/detector/detector_test.go`; CI runs `go vet` + `go test` (`.github/workflows/ci.yml`). |
+| Behavioural baseline | Planned | Signature engine done; STIDE anomaly engine is Phase 2. |
 
 ## Remaining quirks worth fixing
 
-- **"PPID" is the thread id** (`tracer.c` / `collector.go`): the low word of
-  `bpf_get_current_pid_tgid()` is the kernel thread id, not the parent PID. Rename
-  or fetch the real parent via `task_struct->real_parent` if you need true PPID.
-- **Name-based filtering depends on enrichment**: `IsMonitored` matches container
-  names, but until `dockerInspect` works the "name" is the 12-char short ID, so
-  whitelist/blacklist by friendly name won't match.
+- **(Fixed) "PPID" was the thread id**: the eBPF field is now named `tid`
+  (`tracer.c` / `collector.go`) to reflect that the low word of
+  `bpf_get_current_pid_tgid()` is the thread id. True process lineage is resolved
+  in userspace via `/proc/<pid>/stat` (see `internal/container/parent.go`).
+- **(Fixed) Name-based filtering**: with Docker enrichment in place, `IsMonitored`
+  and `KW_CONTAINER_*` now match real container names, not short IDs.
 
 ## A realistic forward view
 

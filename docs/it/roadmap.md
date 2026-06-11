@@ -2,12 +2,22 @@
 
 ## Roadmap (dal README del progetto)
 
+- [x] Detection consapevole del contesto — genealogia dei processi + argv +
+  arricchimento Docker (Fase 1, vedi [detection-rules.md](detection-rules.md)).
+- [x] Arricchimento MITRE ATT&CK per tutte le regole.
+- [x] Copertura di detection oltre l'Execution — Persistence (scritture
+  cron/systemd/ld.so.preload), process injection (`ptrace`), caricamento di moduli
+  kernel ed eBPF.
+- [ ] Copertura rimanente — `connect` IPv6, una regola C2 basata su connect, e
+  correlazione delle catene d'attacco (alert singoli → incidenti).
+- [x] Persistenza degli alert su TimescaleDB — storico interrogabile + retention
+  (`internal/storage`, `KW_DB_ENABLED`).
+- [ ] Motore di anomaly detection comportamentale — baseline di sequenze di
+  syscall STIDE / n-gram per workload (Fase 2; modalità learning + profili persistiti).
 - [ ] Profiler statico — analisi pre-deploy delle immagini con `syft`.
-- [ ] Baseline comportamentale per container — anomaly detection con autoencoder ML.
-- [ ] REST API + dashboard WebSocket.
-- [ ] Integrazione TimescaleDB per lo storico degli eventi.
+- [ ] REST API + dashboard WebSocket (interrogano gli alert salvati).
 - [ ] Supporto Kubernetes DaemonSet.
-- [ ] Arricchimento MITRE ATT&CK per tutte le regole.
+- [ ] Enforcement a runtime (terminazione del processo, stile Tetragon).
 
 ## Correzioni di stabilizzazione già applicate
 
@@ -51,13 +61,13 @@ Bloccavano una build/esecuzione funzionante e sono state corrette nel repo:
 
 ## Quirk rimasti da sistemare
 
-- **"PPID" è il thread id** (`tracer.c` / `collector.go`): la word bassa di
-  `bpf_get_current_pid_tgid()` è il thread id del kernel, non il PID del padre.
-  Rinominalo o recupera il vero padre via `task_struct->real_parent` se ti serve il
-  vero PPID.
-- **Il filtraggio per nome dipende dall'arricchimento**: `IsMonitored` matcha sui nomi
-  dei container, ma finché `dockerInspect` non funziona il "nome" è lo short ID di 12
-  caratteri, quindi whitelist/blacklist per nome amichevole non corrisponderanno.
+- **(Risolto) "PPID" era il thread id**: il campo eBPF ora si chiama `tid`
+  (`tracer.c` / `collector.go`) per riflettere che la word bassa di
+  `bpf_get_current_pid_tgid()` è il thread id. La vera genealogia dei processi è
+  risolta in userspace via `/proc/<pid>/stat` (vedi
+  `internal/container/parent.go`).
+- **(Risolto) Filtraggio per nome**: con l'arricchimento Docker, `IsMonitored` e
+  `KW_CONTAINER_*` ora corrispondono ai nomi reali dei container, non agli short ID.
 
 ## Una previsione realistica
 

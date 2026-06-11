@@ -17,6 +17,9 @@ della stessa immagine ovunque e si cambia solo il `.env`. Copia `.env.example` i
 | `KW_ALERT_RATE_WINDOW` | int (s) | `60` | Lunghezza della finestra scorrevole per il rate limiting. |
 | `KW_LOG_ENABLED` | bool | `true` | Scrive gli alert nel file di log JSON. |
 | `KW_LOG_PATH` | string | `/var/log/kernelwatch/alerts.json` | Percorso del log degli alert (directory creata automaticamente). |
+| `KW_LOG_MAX_MB` | int | `50` | Ruota il log degli alert oltre questa dimensione; `0` disabilita la rotazione. |
+| `KW_LOG_MAX_BACKUPS` | int | `3` | Backup ruotati da mantenere (`alerts.json.1…N`). |
+| `KW_HEALTH_FILE` | string | `/var/log/kernelwatch/health` | File di heartbeat scritto dal demone e controllato da `kernelwatch -health`. |
 | `KW_WEBHOOK_ENABLED` | bool | `false` | Abilita la consegna via webhook. |
 | `KW_WEBHOOK_URL` | string | — | Endpoint webhook. **Obbligatorio** se il webhook è abilitato. |
 | `KW_WEBHOOK_SECRET` | string | — | Chiave di firma HMAC-SHA256. Se vuota, le richieste non sono firmate. |
@@ -25,7 +28,9 @@ della stessa immagine ovunque e si cambia solo il `.env`. Copia `.env.example` i
 | `KW_SLACK_CHANNEL` | string | `#security-alerts` | Canale Slack. |
 | `KW_API_PORT` | int | `8080` | Porta REST API. Validata 1–65535. *(API non ancora implementata.)* |
 | `KW_API_TOKEN` | string | — | Bearer token per la futura API. |
-| `KW_EBPF_RINGBUF_SIZE` | int (byte) | `16777216` (16 MB) | Dimensione del ring buffer. *(Letta nella config ma non ancora applicata al load — vedi roadmap.)* |
+| `KW_EBPF_RINGBUF_SIZE` | int (byte) | `16777216` (16 MB) | Dimensione del ring buffer, applicata al load eBPF. Potenza di due, multiplo della page size. Aumentala se `kernel_drops` cresce nel log delle stats. |
+| `KW_DB_ENABLED` | bool | `false` | Salva gli alert su TimescaleDB. docker-compose lo imposta a `true`. Best-effort: un DB non raggiungibile non blocca mai il monitoraggio. |
+| `KW_DB_RETENTION_DAYS` | int | `90` | Elimina automaticamente gli alert più vecchi di N giorni (retention TimescaleDB). `0` = conserva per sempre. |
 | `KW_DB_HOST` | string | `localhost` | Host TimescaleDB. |
 | `KW_DB_PORT` | int | `5432` | Porta TimescaleDB. |
 | `KW_DB_NAME` | string | `kernelwatch` | Nome database. |

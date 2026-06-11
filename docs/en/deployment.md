@@ -49,12 +49,16 @@ docker compose logs -f kernelwatch
 
 - `timescale/timescaledb:latest-pg16`.
 - Credentials from `KW_DB_*`.
-- `./migrations:/docker-entrypoint-initdb.d:ro` — SQL here runs on **first** start.
-  The directory exists (currently just a `.gitkeep`); drop `.sql` files here later.
+- `./migrations:/docker-entrypoint-initdb.d:ro` — SQL here runs on **first** start
+  (`0001_alerts.sql` creates the alerts hypertable). The app also applies the same
+  schema idempotently at startup, so existing volumes are covered too.
 - Bound to `127.0.0.1:5432` only — never expose Postgres to the internet.
 
-> The daemon does not talk to the database yet (persistence is on the roadmap), so
-> the `db` service is currently optional infrastructure.
+> The daemon persists **alerts** to this database when `KW_DB_ENABLED=true`
+> (Compose sets it). The store is best-effort — if the DB is down KernelWatch keeps
+> monitoring and the log file remains the durable fallback. Raw syscall events are
+> not stored. Query history with
+> `docker compose exec db psql -U kernelwatch -c "select timestamp,severity,rule_id,container_name,reason from alerts order by timestamp desc limit 20;"`.
 
 ## The Docker image (multi-stage)
 
@@ -105,8 +109,24 @@ Configuration is read from the process environment (export `KW_*` vars or source
 
 - **Capabilities vs. privileged:** some kernels/distros may still require additional
   relaxations; if eBPF load fails, check kernel lockdown and AppArmor.
-- **Log growth:** `alerts.json` is append-only newline-delimited JSON — add log
-  rotation for long-running hosts.
+- **Healthcheck:** the container healthcheck runs `kernelwatch -health`, which
+  passes only when the daemon's heartbeat file is fresh (event loop alive and
+  draining) — stronger than a process-exists check. A wedged or dead daemon is
+  marked unhealthy and restarted.
+- **Event-loss visibility:** the periodic `stats` log line reports `kernel_drops`
+  (ring-buffer overflow), `channel_drops` (userspace backpressure), and
+  `enrich_miss_*` (process exited before `/proc` lineage/argv could be read). If
+  `kernel_drops` climbs, raise `KW_EBPF_RINGBUF_SIZE`.
+- **Log growth:** `alerts.json` rotates automatically at `KW_LOG_MAX_MB` keeping
+  `KW_LOG_MAX_BACKUPS` files, so it cannot fill the host disk.
+- **Resource limits:** Compose caps the daemon at `cpus: 1.0`, `mem_limit: 256m`,
+  `pids_limit: 512` so it can never starve the host's real workload — raise on
+  very high-syscall-volume hosts.
+- **Alert delivery:** webhook/Slack delivery retries with backoff; every alert
+  carries a stable `id` so a delivered alert can be correlated to its DB row.
+- **Pinned image:** for fleet deployments, pull a released tag
+  (`ghcr.io/<owner>/kernelwatch:<version>`, built by the Release workflow) instead
+  of `build:` so every host runs an identical, prebuilt binary.
 - **Verifying it works:** after `up`, exec a shell into any *other* container
-  (`docker exec -it <c> sh`) and watch a High-severity `shell execution inside
-  container` alert appear in `docker compose logs -f kernelwatch`.
+  (`docker exec -it <c> sh`) and watch a `shell execution inside container` alert
+  appear in `docker compose logs -f kernelwatch`.
