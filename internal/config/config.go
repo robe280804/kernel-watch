@@ -162,6 +162,14 @@ func (c *Config) validate() error {
 	if c.Mode != "alert" && c.Mode != "monitor" {
 		return fmt.Errorf("KW_MODE must be one of: alert, monitor (got %q)", c.Mode)
 	}
+	if c.DBEnabled {
+		if c.DBPassword == "" {
+			return fmt.Errorf("KW_DB_PASSWORD is required when KW_DB_ENABLED=true (it must match the database's password)")
+		}
+		if c.DBPassword == "changeme" {
+			return fmt.Errorf("KW_DB_PASSWORD must not be the default 'changeme' — set a strong password")
+		}
+	}
 	if c.APIPort < 1 || c.APIPort > 65535 {
 		return fmt.Errorf("KW_API_PORT must be between 1 and 65535 (got %d)", c.APIPort)
 	}

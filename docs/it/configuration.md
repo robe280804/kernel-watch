@@ -35,7 +35,7 @@ della stessa immagine ovunque e si cambia solo il `.env`. Copia `.env.example` i
 | `KW_DB_PORT` | int | `5432` | Porta TimescaleDB. |
 | `KW_DB_NAME` | string | `kernelwatch` | Nome database. |
 | `KW_DB_USER` | string | `kernelwatch` | Utente database. |
-| `KW_DB_PASSWORD` | string | — | Password database. |
+| `KW_DB_PASSWORD` | string | — | Password database. **Obbligatoria quando `KW_DB_ENABLED=true`; il demone non parte se vuota o lasciata a `changeme`.** |
 | `KW_DB_SSL_MODE` | string | `disable` | `sslmode` per il DSN. |
 
 > I valori CSV vengono divisi sulle virgole e trimmati; le voci vuote sono scartate. I

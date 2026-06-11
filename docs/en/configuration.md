@@ -34,7 +34,7 @@ everywhere and change only the `.env`. Copy `.env.example` to `.env` to start.
 | `KW_DB_PORT` | int | `5432` | TimescaleDB port. |
 | `KW_DB_NAME` | string | `kernelwatch` | Database name. |
 | `KW_DB_USER` | string | `kernelwatch` | Database user. |
-| `KW_DB_PASSWORD` | string | — | Database password. |
+| `KW_DB_PASSWORD` | string | — | Database password. **Required when `KW_DB_ENABLED=true`; the daemon refuses to start if empty or left as `changeme`.** |
 | `KW_DB_SSL_MODE` | string | `disable` | `sslmode` for the DSN. |
 
 > CSV values are split on commas and trimmed; empty entries are dropped. Booleans
