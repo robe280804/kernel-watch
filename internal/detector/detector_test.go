@@ -85,8 +85,13 @@ func TestNetworkToolLineage(t *testing.T) {
 		t.Fatalf("curl from cron healthcheck should be suppressed, got %s", a.Reason)
 	}
 	d2 := newTestDetector(t)
-	if a := byRule(d2.Check(containerExec("/usr/bin/curl", "curl http://evil", []string{"php"})), "network_tool"); a == nil || a.Severity != alerter.SeverityHigh {
-		t.Fatalf("curl from php should be High, got %#v", a)
+	if a := byRule(d2.Check(containerExec("/usr/bin/curl", "curl http://evil", []string{"php-fpm"})), "network_tool"); a == nil || a.Severity != alerter.SeverityHigh {
+		t.Fatalf("curl from php-fpm should be High, got %#v", a)
+	}
+	// Bare `php` (the CLI runtime, e.g. artisan) is NOT network-facing → Medium, not High.
+	d3 := newTestDetector(t)
+	if a := byRule(d3.Check(containerExec("/usr/bin/curl", "curl http://x", []string{"php"})), "network_tool"); a == nil || a.Severity != alerter.SeverityMedium {
+		t.Fatalf("curl from bare php should be Medium (not escalated), got %#v", a)
 	}
 }
 

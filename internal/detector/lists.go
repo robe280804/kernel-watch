@@ -61,9 +61,14 @@ var defaultTrustedParents = []string{
 	"tini", "dumb-init", "s6-supervise", "s6-svscan", "supervisord", "runsv",
 }
 
+// Only dedicated, internet-facing server daemons belong here — NOT bare language
+// runtimes. A web RCE always goes through the server process (php-fpm, gunicorn,
+// puma, …), whereas the bare interpreter (`php artisan`, `python manage.py`,
+// `ruby rake`) is routinely used by schedulers/queues/CLI tooling and would
+// produce false positives if treated as network-facing.
 var defaultNetworkParents = []string{
 	"nginx", "apache2", "httpd", "caddy", "haproxy", "lighttpd",
-	"php-fpm", "php", "node", "python", "python3", "java", "ruby",
+	"php-fpm", "node", "java",
 	"puma", "unicorn", "gunicorn", "uwsgi", "mongrel",
 	"mysqld", "postgres", "redis-server", "memcached", "tomcat", "catalina.sh",
 }

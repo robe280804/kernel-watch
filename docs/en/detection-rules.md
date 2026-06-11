@@ -34,9 +34,12 @@ Each ancestry chain is classified using two lists (overridable via config):
   `containerd-shim`, `runc`, `tini`, `dumb-init`, `s6-*`, `supervisord`, …) —
   benign supervisors/schedulers/entrypoints.
 - **Network-facing** (`KW_NETWORK_PARENTS` + built-ins: `nginx`, `apache2`,
-  `httpd`, `php-fpm`, `php`, `node`, `python`, `java`, `ruby`, `puma`,
-  `gunicorn`, `mysqld`, `postgres`, `redis-server`, …) — internet-exposed
-  service runtimes. **Network-facing wins** when both appear in a chain.
+  `httpd`, `php-fpm`, `node`, `java`, `puma`, `unicorn`, `gunicorn`, `uwsgi`,
+  `mysqld`, `postgres`, `redis-server`, …) — internet-exposed **server daemons**.
+  Bare language runtimes (`php`, `python`, `ruby`) are deliberately excluded: a
+  web RCE goes through the daemon (`php-fpm`), while the bare interpreter is the
+  scheduler/queue/CLI (`php artisan`) and would false-positive.
+  **Network-facing wins** when both appear in a chain.
 
 ---
 

@@ -37,9 +37,12 @@ configurazione):
   `containerd-shim`, `runc`, `tini`, `dumb-init`, `s6-*`, `supervisord`, …) —
   supervisori/scheduler/entrypoint benigni.
 - **Network-facing** (`KW_NETWORK_PARENTS` + integrati: `nginx`, `apache2`,
-  `httpd`, `php-fpm`, `php`, `node`, `python`, `java`, `ruby`, `puma`,
-  `gunicorn`, `mysqld`, `postgres`, `redis-server`, …) — runtime di servizi
-  esposti in rete. In caso di entrambi nella catena, **prevale network-facing**.
+  `httpd`, `php-fpm`, `node`, `java`, `puma`, `unicorn`, `gunicorn`, `uwsgi`,
+  `mysqld`, `postgres`, `redis-server`, …) — **server daemon** esposti in rete.
+  I runtime "nudi" (`php`, `python`, `ruby`) sono esclusi di proposito: un RCE
+  web passa dal daemon (`php-fpm`), mentre l'interprete nudo è lo
+  scheduler/queue/CLI (`php artisan`) e genererebbe falsi positivi.
+  In caso di entrambi nella catena, **prevale network-facing**.
 
 ---
 
