@@ -13,6 +13,12 @@ RUN apt-get update && apt-get install -y \
     linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# bpf2go compiles with `-target bpf`, which drops clang's multiarch include path.
+# On Debian the UAPI <asm/types.h> lives under /usr/include/x86_64-linux-gnu/asm,
+# so without this symlink the compile fails with "'asm/types.h' file not found".
+# (amd64 is assumed — consistent with GOARCH=amd64 in the build step below.)
+RUN ln -sf /usr/include/x86_64-linux-gnu/asm /usr/include/asm
+
 WORKDIR /build
 
 # Allow the toolchain to add missing go.mod/go.sum entries on the fly.
