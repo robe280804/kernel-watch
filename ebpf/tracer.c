@@ -22,6 +22,9 @@
 #define EVENT_OPEN     2   // file opening
 #define EVENT_CONNECT  3   // exit connection
 #define EVENT_CLONE    4   // new process/thread
+#define EVENT_PTRACE   5   // ptrace (process injection)
+#define EVENT_MODULE   6   // kernel module load (init_module/finit_module)
+#define EVENT_BPF      7   // bpf() syscall (program load / map ops)
 
 // ── Syscall tracepoint context (stable ABI layout) ───────────────────────────
 // Mirrors the kernel's struct trace_event_raw_sys_enter:
@@ -38,7 +41,7 @@ struct trace_event_raw_sys_enter {
 // Keep this struct in sync with the Go struct in collector.go
 struct event {
     __u32 pid;
-    __u32 ppid;
+    __u32 tid;              // thread id (NOT parent pid); lineage resolved in userspace
     __u32 uid;
     __u8  event_type;       // EVENT_* constants above
     char  comm[16];         // process name (from task_struct)
@@ -46,6 +49,8 @@ struct event {
     __u16 dport;            // for connect: destination port (network byte order)
     __u32 daddr;            // for connect: destination IPv4 address
     __u64 timestamp_ns;     // bpf_ktime_get_ns()
+    __u64 arg1;             // generic scalar: openat flags / ptrace request / bpf cmd
+    __u64 arg2;             // generic scalar: ptrace target pid
 };
 
 // ── Ring buffer map (kernel → userspace) ─────────────────────────────────────
@@ -54,11 +59,28 @@ struct {
     __uint(max_entries, 1 << 24); // 16MB — overridden at load time by Go
 } events SEC(".maps");
 
+// ── Drop counter (kernel → userspace) ────────────────────────────────────────
+// Incremented whenever a ring-buffer reservation fails (buffer full). Userspace
+// reads this periodically so event loss under load is visible, not silent.
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} dropcount SEC(".maps");
+
+static __always_inline void count_drop(void) {
+    __u32 key = 0;
+    __u64 *c = bpf_map_lookup_elem(&dropcount, &key);
+    if (c)
+        __sync_fetch_and_add(c, 1);
+}
+
 // ── Helper: populate common fields ───────────────────────────────────────────
 static __always_inline void fill_common(struct event *e, __u8 type) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     e->pid        = pid_tgid >> 32;
-    e->ppid       = pid_tgid & 0xFFFFFFFF;
+    e->tid        = pid_tgid & 0xFFFFFFFF;
     e->uid        = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     e->event_type = type;
     e->timestamp_ns = bpf_ktime_get_ns();
@@ -69,7 +91,7 @@ static __always_inline void fill_common(struct event *e, __u8 type) {
 SEC("tracepoint/syscalls/sys_enter_execve")
 int trace_execve(struct trace_event_raw_sys_enter *ctx) {
     struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) return 0;
+    if (!e) { count_drop(); return 0; }
 
     fill_common(e, EVENT_EXECVE);
 
@@ -85,13 +107,17 @@ int trace_execve(struct trace_event_raw_sys_enter *ctx) {
 SEC("tracepoint/syscalls/sys_enter_openat")
 int trace_openat(struct trace_event_raw_sys_enter *ctx) {
     struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) return 0;
+    if (!e) { count_drop(); return 0; }
 
     fill_common(e, EVENT_OPEN);
 
     // Read the path argument (second arg to openat)
     const char *filename = (const char *)ctx->args[1];
     bpf_probe_read_user_str(e->filename, sizeof(e->filename), filename);
+
+    // Record the open flags (third arg) so userspace can tell reads from writes
+    // — needed for persistence detection (writes to cron/systemd/etc).
+    e->arg1 = (__u64)ctx->args[2];
 
     // Only emit events for interesting paths to reduce noise
     // (full filtering happens in userspace — here we just record)
@@ -110,7 +136,7 @@ struct sa_in {
 SEC("tracepoint/syscalls/sys_enter_connect")
 int trace_connect(struct trace_event_raw_sys_enter *ctx) {
     struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) return 0;
+    if (!e) { count_drop(); return 0; }
 
     fill_common(e, EVENT_CONNECT);
 
@@ -132,9 +158,55 @@ int trace_connect(struct trace_event_raw_sys_enter *ctx) {
 SEC("tracepoint/syscalls/sys_enter_clone")
 int trace_clone(struct trace_event_raw_sys_enter *ctx) {
     struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) return 0;
+    if (!e) { count_drop(); return 0; }
 
     fill_common(e, EVENT_CLONE);
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+// ── ptrace — process injection / debugging of another process ────────────────
+SEC("tracepoint/syscalls/sys_enter_ptrace")
+int trace_ptrace(struct trace_event_raw_sys_enter *ctx) {
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) { count_drop(); return 0; }
+
+    fill_common(e, EVENT_PTRACE);
+    e->arg1 = (__u64)ctx->args[0]; // ptrace request (PTRACE_ATTACH/POKETEXT/…)
+    e->arg2 = (__u64)ctx->args[1]; // target pid
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+// ── init_module / finit_module — kernel module load (rootkit / LKM) ──────────
+SEC("tracepoint/syscalls/sys_enter_init_module")
+int trace_init_module(struct trace_event_raw_sys_enter *ctx) {
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) { count_drop(); return 0; }
+
+    fill_common(e, EVENT_MODULE);
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_finit_module")
+int trace_finit_module(struct trace_event_raw_sys_enter *ctx) {
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) { count_drop(); return 0; }
+
+    fill_common(e, EVENT_MODULE);
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+// ── bpf — loading eBPF programs from a container (evasion / rootkit) ──────────
+SEC("tracepoint/syscalls/sys_enter_bpf")
+int trace_bpf(struct trace_event_raw_sys_enter *ctx) {
+    struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+    if (!e) { count_drop(); return 0; }
+
+    fill_common(e, EVENT_BPF);
+    e->arg1 = (__u64)ctx->args[0]; // bpf command (BPF_PROG_LOAD = 5, etc.)
     bpf_ringbuf_submit(e, 0);
     return 0;
 }

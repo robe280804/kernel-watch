@@ -1,7 +1,6 @@
 package container
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,16 +21,18 @@ type Info struct {
 // Mapper resolves PIDs to container metadata.
 // It caches results to avoid hitting /proc on every event.
 type Mapper struct {
-	mu    sync.RWMutex
-	cache map[uint32]*Info // pid → container info (nil = host process)
-	ttl   time.Duration
+	mu     sync.RWMutex
+	cache  map[uint32]*Info // pid → container info (nil = host process)
+	ttl    time.Duration
+	docker *dockerEnricher // resolves container name/image via the Docker socket
 }
 
 // New creates a new Mapper with a cache TTL.
 func New(cacheTTL time.Duration) *Mapper {
 	m := &Mapper{
-		cache: make(map[uint32]*Info),
-		ttl:   cacheTTL,
+		cache:  make(map[uint32]*Info),
+		ttl:    cacheTTL,
+		docker: newDockerEnricher(),
 	}
 	// Evict stale entries periodically
 	go m.evictLoop()
@@ -77,18 +78,18 @@ func (m *Mapper) resolveFromProc(pid uint32) (*Info, error) {
 		return nil, nil
 	}
 
-	// Try to enrich with Docker inspect data
+	// Enrich with the container's real name/image via the Docker socket.
+	// Falls back to the short ID when Docker is unreachable.
 	info := &Info{
 		ID:         containerID,
 		ShortID:    containerID[:12],
 		ResolvedAt: time.Now(),
 	}
 
-	if name, image, err := dockerInspect(containerID); err == nil {
-		info.Name = name
-		info.ImageName = image
+	if meta, ok := m.docker.lookup(containerID); ok && meta.Name != "" {
+		info.Name = meta.Name
+		info.ImageName = meta.Image
 	} else {
-		// Fallback: use short ID as name
 		info.Name = containerID[:12]
 	}
 
@@ -127,24 +128,6 @@ func extractContainerID(cgroupData string) string {
 		}
 	}
 	return ""
-}
-
-// dockerInspect calls the Docker socket to get container name and image.
-// Uses the Docker Engine API v1.41 via Unix socket.
-func dockerInspect(containerID string) (name, image string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// Read from Docker socket via HTTP over Unix socket
-	// We use a simple approach: exec `docker inspect` is too heavy,
-	// so we read from the cached /proc info or use a minimal HTTP client.
-	//
-	// For now, try reading the container name from /proc/<pid>/environ
-	// which Docker sets HOSTNAME= to the short container ID.
-	// Full Docker API integration is in collector.go where we have the client.
-	_ = ctx
-	_ = containerID
-	return "", "", fmt.Errorf("not implemented — enriched by collector")
 }
 
 // Invalidate removes a PID from the cache (call when a container stops).
