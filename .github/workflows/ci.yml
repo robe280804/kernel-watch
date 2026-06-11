@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      # eBPF compile deps for `go generate` (bpf2go → clang). tracer.c is
+      # self-contained (no vmlinux.h / host BTF), but bpf2go compiles with
+      # `-target bpf`, which drops clang's multiarch include path — hence the
+      # asm symlink (same fix as the Dockerfile).
+      - name: Install eBPF toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang llvm libbpf-dev linux-libc-dev
+          sudo ln -sf /usr/include/x86_64-linux-gnu/asm /usr/include/asm
+
+      - name: Generate eBPF scaffolding
+        run: go generate ./...
+        env:
+          GOFLAGS: -mod=mod
+
+      - name: Vet
+        run: go vet ./...
+        env:
+          GOFLAGS: -mod=mod
+
+      - name: Test
+        run: go test -race ./...
+        env:
+          GOFLAGS: -mod=mod

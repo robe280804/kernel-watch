@@ -13,6 +13,16 @@ type Config struct {
 	// Server identity
 	ServerName string
 
+	// Detection mode: "alert" (default) dispatches alerts; "monitor" is dry-run —
+	// rules are evaluated and logged but webhook/Slack are never called.
+	Mode string
+
+	// Process-lineage detection tuning
+	AncestryDepth       int      // ancestors to resolve per execve (default 5)
+	TrustedParents      []string // extra parent comms treated as benign supervisors/schedulers
+	NetworkParents      []string // extra parent comms treated as network-facing (attack surface)
+	DetectionExceptions []string // suppress matches by image/name/ancestry/argv substring
+
 	// Container filtering
 	ContainerWhitelist []string // empty = monitor all
 	ContainerBlacklist []string
@@ -23,8 +33,10 @@ type Config struct {
 	AlertRateWindow  int // seconds
 
 	// Alert destinations
-	LogEnabled  bool
-	LogPath     string
+	LogEnabled    bool
+	LogPath       string
+	LogMaxMB      int // rotate alerts.json past this size (0 = no rotation)
+	LogMaxBackups int // how many rotated files to keep
 	WebhookEnabled bool
 	WebhookURL     string
 	WebhookSecret  string
@@ -39,13 +51,18 @@ type Config struct {
 	// eBPF
 	EBPFRingbufSize int
 
+	// Health
+	HealthFile string // heartbeat file used by the `-health` check
+
 	// Database
-	DBHost     string
-	DBPort     int
-	DBName     string
-	DBUser     string
-	DBPassword string
-	DBSSLMode  string
+	DBEnabled       bool // persist alerts to TimescaleDB
+	DBRetentionDays int  // auto-drop alerts older than this (0 = keep forever)
+	DBHost          string
+	DBPort          int
+	DBName          string
+	DBUser          string
+	DBPassword      string
+	DBSSLMode       string
 }
 
 // Load reads all KW_* environment variables and returns a validated Config.
@@ -54,11 +71,16 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		// Defaults — can be overridden by env vars
 		ServerName:      envOr("KW_SERVER_NAME", "kernelwatch-host"),
+		Mode:            envOr("KW_MODE", "alert"),
+		AncestryDepth:   5,
 		AlertMinSeverity: envOr("KW_ALERT_MIN_SEVERITY", "medium"),
 		AlertMaxRate:    10,
 		AlertRateWindow: 60,
 		LogEnabled:      true,
 		LogPath:         envOr("KW_LOG_PATH", "/var/log/kernelwatch/alerts.json"),
+		LogMaxMB:        50,
+		LogMaxBackups:   3,
+		HealthFile:      envOr("KW_HEALTH_FILE", "/var/log/kernelwatch/health"),
 		APIPort:         8080,
 		EBPFRingbufSize: 16 * 1024 * 1024, // 16MB
 		DBHost:          envOr("KW_DB_HOST", "localhost"),
@@ -72,6 +94,14 @@ func Load() (*Config, error) {
 	cfg.ContainerWhitelist = splitCSV(os.Getenv("KW_CONTAINER_WHITELIST"))
 	cfg.ContainerBlacklist = splitCSV(os.Getenv("KW_CONTAINER_BLACKLIST"))
 
+	// Process-lineage detection tuning
+	if v, err := envInt("KW_ANCESTRY_DEPTH", 5); err == nil && v > 0 {
+		cfg.AncestryDepth = v
+	}
+	cfg.TrustedParents = splitCSV(os.Getenv("KW_TRUSTED_PARENTS"))
+	cfg.NetworkParents = splitCSV(os.Getenv("KW_NETWORK_PARENTS"))
+	cfg.DetectionExceptions = splitCSV(os.Getenv("KW_DETECTION_EXCEPTIONS"))
+
 	// Alert thresholds
 	if v, err := envInt("KW_ALERT_MAX_RATE", 10); err == nil {
 		cfg.AlertMaxRate = v
@@ -82,6 +112,12 @@ func Load() (*Config, error) {
 
 	// Alert destinations
 	cfg.LogEnabled = envBool("KW_LOG_ENABLED", true)
+	if v, err := envInt("KW_LOG_MAX_MB", 50); err == nil {
+		cfg.LogMaxMB = v
+	}
+	if v, err := envInt("KW_LOG_MAX_BACKUPS", 3); err == nil {
+		cfg.LogMaxBackups = v
+	}
 	cfg.WebhookEnabled = envBool("KW_WEBHOOK_ENABLED", false)
 	cfg.WebhookURL = os.Getenv("KW_WEBHOOK_URL")
 	cfg.WebhookSecret = os.Getenv("KW_WEBHOOK_SECRET")
@@ -101,6 +137,10 @@ func Load() (*Config, error) {
 	}
 
 	// Database
+	cfg.DBEnabled = envBool("KW_DB_ENABLED", false)
+	if v, err := envInt("KW_DB_RETENTION_DAYS", 90); err == nil {
+		cfg.DBRetentionDays = v
+	}
 	cfg.DBPassword = os.Getenv("KW_DB_PASSWORD")
 	if v, err := envInt("KW_DB_PORT", 5432); err == nil {
 		cfg.DBPort = v
@@ -118,6 +158,9 @@ func (c *Config) validate() error {
 	validSeverities := map[string]bool{"low": true, "medium": true, "high": true, "critical": true}
 	if !validSeverities[c.AlertMinSeverity] {
 		return fmt.Errorf("KW_ALERT_MIN_SEVERITY must be one of: low, medium, high, critical (got %q)", c.AlertMinSeverity)
+	}
+	if c.Mode != "alert" && c.Mode != "monitor" {
+		return fmt.Errorf("KW_MODE must be one of: alert, monitor (got %q)", c.Mode)
 	}
 	if c.APIPort < 1 || c.APIPort > 65535 {
 		return fmt.Errorf("KW_API_PORT must be between 1 and 65535 (got %d)", c.APIPort)
