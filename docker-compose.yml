@@ -7,6 +7,13 @@ services:
     container_name: kernelwatch
     restart: unless-stopped
 
+    # Resource guardrails — the monitor must never starve the host's real
+    # workload. eBPF capture + per-event /proc reads are the main cost; a typical
+    # web host stays well under these. Raise on very high-syscall-volume hosts.
+    cpus: "1.0"
+    mem_limit: 256m
+    pids_limit: 512
+
     # eBPF requires access to the host kernel.
     # These are the minimum required privileges.
     privileged: false
@@ -52,14 +59,25 @@ services:
     # Override specific vars here if needed (takes precedence over .env)
     environment:
       - KW_SERVER_NAME=${KW_SERVER_NAME:-my-server}
+      # Persist alerts to the bundled TimescaleDB by default in Compose. The
+      # store is best-effort: if the DB is down KernelWatch keeps monitoring.
+      - KW_DB_ENABLED=${KW_DB_ENABLED:-true}
+      - KW_DB_HOST=${KW_DB_HOST:-127.0.0.1}
 
-    # Health check: verify the process is running
+    # Start the database first (the store is still resilient if it drops later).
+    depends_on:
+      db:
+        condition: service_healthy
+
+    # Health check: the binary's -health subcommand verifies the heartbeat file
+    # is fresh — i.e. the event loop is alive and draining (far stronger than a
+    # bare process-exists check).
     healthcheck:
-      test: ["CMD", "pgrep", "kernelwatch"]
+      test: ["CMD", "/usr/local/bin/kernelwatch", "-health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 20s
 
   # ── TimescaleDB (events storage) ────────────────────────────────────────────
   db:

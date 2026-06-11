@@ -14,10 +14,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # bpf2go compiles with `-target bpf`, which drops clang's multiarch include path.
-# On Debian the UAPI <asm/types.h> lives under /usr/include/x86_64-linux-gnu/asm,
+# On Debian the UAPI <asm/types.h> lives under /usr/include/<arch>-linux-gnu/asm,
 # so without this symlink the compile fails with "'asm/types.h' file not found".
-# (amd64 is assumed — consistent with GOARCH=amd64 in the build step below.)
-RUN ln -sf /usr/include/x86_64-linux-gnu/asm /usr/include/asm
+# uname -m makes this work on amd64 (x86_64) and arm64 (aarch64) native builds.
+RUN ln -sf /usr/include/$(uname -m)-linux-gnu/asm /usr/include/asm
 
 WORKDIR /build
 
@@ -42,9 +42,12 @@ COPY . .
 # tracer.c is self-contained, so no vmlinux.h / host BTF is required here.
 RUN go generate ./...
 
-# Build the Go binary (static, no CGO for the Go parts)
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w" -o /kernelwatch .
+# Build the Go binary (static, no CGO for the Go parts). VERSION is stamped into
+# the binary (printed by `kernelwatch -version` and logged at startup). GOARCH is
+# left to the builder's native arch so arm64 hosts produce arm64 binaries.
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux \
+    go build -ldflags="-s -w -X main.version=${VERSION}" -o /kernelwatch .
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
