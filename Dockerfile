@@ -49,10 +49,17 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-# Runtime deps: libelf for eBPF loading
+# Runtime deps:
+#  - libelf1        : eBPF object loading
+#  - ca-certificates: outbound TLS (webhook/Slack alerts)
+#  - procps         : provides `pgrep`, used by the compose healthcheck. Without
+#                     it the healthcheck errors "not found" → container is marked
+#                     unhealthy → an autoheal sidecar (if present) restarts it in
+#                     a loop despite the daemon being perfectly healthy.
 RUN apt-get update && apt-get install -y \
     libelf1 \
     ca-certificates \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Create log directory
