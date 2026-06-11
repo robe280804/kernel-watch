@@ -1,6 +1,6 @@
-# ContainerSentry — Documentation (English)
+# KernelWatch — Documentation (English)
 
-ContainerSentry is an **eBPF-based Host Intrusion Detection System (HIDS)** for
+KernelWatch is an **eBPF-based Host Intrusion Detection System (HIDS)** for
 Docker containers. It hooks Linux syscalls in **kernel space** and detects
 suspicious behaviour inside running containers — **without installing any agent
 inside the containers themselves**.
@@ -8,8 +8,8 @@ inside the containers themselves**.
 Because the monitoring lives in the kernel, an attacker who compromises a
 container cannot disable it from within.
 
-> The Go module is named `containersentry`. (An early build logged the startup
-> line as "KernelWatch" — now corrected to "ContainerSentry starting".)
+> The Go module is named `kernelwatch`. (An early build logged the startup
+> line as "KernelWatch" — now corrected to "KernelWatch starting".)
 
 ## Documentation index
 
@@ -18,7 +18,7 @@ container cannot disable it from within.
 | [overview.md](overview.md) | What the project is, core concepts (eBPF, HIDS, ring buffer), maturity. |
 | [architecture.md](architecture.md) | How the components fit together, the end-to-end data flow, the binary event layout. |
 | [components.md](components.md) | File-by-file reference of every source file, with key functions and structs. |
-| [configuration.md](configuration.md) | Every `CS_*` environment variable, defaults, and validation rules. |
+| [configuration.md](configuration.md) | Every `KW_*` environment variable, defaults, and validation rules. |
 | [detection-rules.md](detection-rules.md) | The 6 detection rules, what triggers them, severities and MITRE ATT&CK mapping. |
 | [deployment.md](deployment.md) | Docker / Docker Compose deployment, required capabilities, build from source. |
 | [development.md](development.md) | Local build, eBPF code generation, how to add a new rule or syscall hook. |
@@ -37,9 +37,9 @@ container cannot disable it from within.
 ## Quick start
 
 ```bash
-cp .env.example .env          # set at least CS_SERVER_NAME and CS_API_TOKEN
+cp .env.example .env          # set at least KW_SERVER_NAME and KW_API_TOKEN
 docker compose up -d --build
-docker compose logs -f containersentry
+docker compose logs -f kernelwatch
 ```
 
 See [deployment.md](deployment.md) for full details.

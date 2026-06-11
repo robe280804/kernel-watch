@@ -1,6 +1,6 @@
-# ContainerSentry — Documentazione (Italiano)
+# KernelWatch — Documentazione (Italiano)
 
-ContainerSentry è un **sistema di rilevamento intrusioni a livello host (HIDS)
+KernelWatch è un **sistema di rilevamento intrusioni a livello host (HIDS)
 basato su eBPF** per container Docker. Aggancia le syscall Linux nello **spazio
 kernel** e rileva comportamenti sospetti all'interno dei container in esecuzione
 **senza installare alcun agente dentro i container stessi**.
@@ -8,8 +8,8 @@ kernel** e rileva comportamenti sospetti all'interno dei container in esecuzione
 Poiché il monitoraggio vive nel kernel, un attaccante che compromette un container
 non può disattivarlo dall'interno.
 
-> Il modulo Go si chiama `containersentry`. (Una build iniziale loggava la riga di
-> avvio come "KernelWatch" — ora corretta in "ContainerSentry starting".)
+> Il modulo Go si chiama `kernelwatch`. (Una build iniziale loggava la riga di
+> avvio come "KernelWatch" — ora corretta in "KernelWatch starting".)
 
 ## Indice della documentazione
 
@@ -18,7 +18,7 @@ non può disattivarlo dall'interno.
 | [overview.md](overview.md) | Cos'è il progetto, concetti chiave (eBPF, HIDS, ring buffer), maturità. |
 | [architecture.md](architecture.md) | Come si incastrano i componenti, il flusso dati end-to-end, il layout binario dell'evento. |
 | [components.md](components.md) | Riferimento file per file di ogni sorgente, con funzioni e struct principali. |
-| [configuration.md](configuration.md) | Ogni variabile d'ambiente `CS_*`, valori di default e regole di validazione. |
+| [configuration.md](configuration.md) | Ogni variabile d'ambiente `KW_*`, valori di default e regole di validazione. |
 | [detection-rules.md](detection-rules.md) | Le 6 regole di detection, cosa le attiva, severità e mappatura MITRE ATT&CK. |
 | [deployment.md](deployment.md) | Deploy con Docker / Docker Compose, capability richieste, build da sorgente. |
 | [development.md](development.md) | Build locale, generazione del codice eBPF, come aggiungere una regola o un hook syscall. |
@@ -37,9 +37,9 @@ non può disattivarlo dall'interno.
 ## Avvio rapido
 
 ```bash
-cp .env.example .env          # imposta almeno CS_SERVER_NAME e CS_API_TOKEN
+cp .env.example .env          # imposta almeno KW_SERVER_NAME e KW_API_TOKEN
 docker compose up -d --build
-docker compose logs -f containersentry
+docker compose logs -f kernelwatch
 ```
 
 Vedi [deployment.md](deployment.md) per tutti i dettagli.

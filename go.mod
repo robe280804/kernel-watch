@@ -1,4 +1,4 @@
-module containersentry
+module kernelwatch
 
 go 1.22
 

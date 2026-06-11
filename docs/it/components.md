@@ -55,9 +55,9 @@ tag `//go:build ignore` così che la toolchain Go lo salti durante le build norm
 ## `internal/config/config.go`
 
 **Ruolo:** Caricare e validare tutta la configurazione di runtime dalle variabili
-d'ambiente `CS_*`. Non esistono file di configurazione.
+d'ambiente `KW_*`. Non esistono file di configurazione.
 
-- Struct `Config` — ogni campo mappa 1:1 una variabile `CS_*` (vedi
+- Struct `Config` — ogni campo mappa 1:1 una variabile `KW_*` (vedi
   [configuration.md](configuration.md)).
 - `Load()` — applica i default, poi sovrascrive dall'env, poi `validate()`.
 - `validate()` — verifica `AlertMinSeverity ∈ {low,medium,high,critical}`, `APIPort`
@@ -161,8 +161,8 @@ d'ambiente `CS_*`. Non esistono file di configurazione.
   smistamento a log (sincrono) + webhook + Slack (ciascuno in una goroutine).
 - `writeLog` — appende JSON delimitato da newline al file **e** emette un `slog.Warn`
   strutturato.
-- `sendWebhook` — invia JSON in POST; se `CS_WEBHOOK_SECRET` è impostato, aggiunge un
-  header `X-ContainerSentry-Signature: sha256=<hmac>` (HMAC-SHA256 del body).
+- `sendWebhook` — invia JSON in POST; se `KW_WEBHOOK_SECRET` è impostato, aggiunge un
+  header `X-KernelWatch-Signature: sha256=<hmac>` (HMAC-SHA256 del body).
 - `sendSlack` — costruisce un messaggio Slack Block-Kit con un'emoji di severità e la
   riga MITRE.
 - `isRateLimited(containerID)` — finestra scorrevole: elimina i timestamp più vecchi
@@ -177,16 +177,16 @@ d'ambiente `CS_*`. Non esistono file di configurazione.
 
 ## File di build & deploy
 
-- **`go.mod`** — modulo `containersentry`, Go 1.22, unica require:
+- **`go.mod`** — modulo `kernelwatch`, Go 1.22, unica require:
   `github.com/cilium/ebpf v0.15.0`. (Nessun `go.sum` ancora committato; il `COPY
   go.sum` e il `go mod download` del Dockerfile lo richiederanno.)
 - **`Dockerfile`** — multi-stage: builder (`golang:1.22-bookworm` + clang/LLVM/libelf/
   header, esegue `go generate`, costruisce un binario statico ripulito) → runtime
   (`debian:bookworm-slim` + libelf, utente non-root UID 1000). Vedi
   [deployment.md](deployment.md).
-- **`docker-compose.yml`** — il demone `containersentry` (rete host, capability mirate,
+- **`docker-compose.yml`** — il demone `kernelwatch` (rete host, capability mirate,
   mount host, healthcheck) più un servizio `timescaledb` (`./migrations` eseguito
   automaticamente al primo avvio, bindato solo su localhost).
-- **`.env.example`** — template documentato di ogni variabile `CS_*`.
+- **`.env.example`** — template documentato di ogni variabile `KW_*`.
 - **`README.md`** — readme di progetto top-level.
 - **`docs/`** — questa documentazione (`en/` e `it/`).

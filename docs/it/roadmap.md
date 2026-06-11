@@ -35,18 +35,18 @@ Bloccavano una build/esecuzione funzionante e sono state corrette nel repo:
   (`e.Filename`) invece che su `comm`, che a `sys_enter_execve` contiene ancora il
   nome del chiamante — così le regole shell/tool/package-manager scattano davvero.
 - **Pulizia**: rimosso lo shim `strings` in `alerter.go` (vero `import "strings"`),
-  rinominato il log di avvio in "ContainerSentry starting", aggiunto
+  rinominato il log di avvio in "KernelWatch starting", aggiunto
   `migrations/.gitkeep`, rimossa una directory spuria da brace-expansion.
 
 ## Ancora incompleto / stub
 
 | Area | Stato | Dettaglio |
 |---|---|---|
-| REST API | Non implementata | `CS_API_PORT`/`CS_API_TOKEN` esistono; nessun server o handler HTTP. |
+| REST API | Non implementata | `KW_API_PORT`/`KW_API_TOKEN` esistono; nessun server o handler HTTP. |
 | Dashboard (WebSocket) | Non implementata | Solo roadmap. |
 | Persistenza DB | Non implementata | `Config.DSN()` pronto; nessuna connessione, schema o insert. |
 | Arricchimento Docker | Stub | `dockerInspect()` restituisce sempre "not implemented"; nome = short ID, immagine = vuota. |
-| Dimensionamento ring buffer | Inattivo | `CS_EBPF_RINGBUF_SIZE` è caricata ma non applicata al load eBPF. |
+| Dimensionamento ring buffer | Inattivo | `KW_EBPF_RINGBUF_SIZE` è caricata ma non applicata al load eBPF. |
 | Test | Nessuno | Nessun file `_test.go`. |
 
 ## Quirk rimasti da sistemare
@@ -72,7 +72,7 @@ l'idraulica "poco glamour ma necessaria":
    `ParseDockerList`) così che gli alert portino nomi e immagini reali dei container e
    il filtraggio per nome funzioni.
 3. REST API + persistenza (schema TimescaleDB, insert, endpoint di query autenticati
-   con `CS_API_TOKEN`).
+   con `KW_API_TOKEN`).
 
 **Medio termine (robustezza)**
 4. Test unitari per la logica pura (regole, `extractContainerID`, rate limiter) e le

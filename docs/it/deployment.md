@@ -12,7 +12,7 @@
 > `vmlinux.h`) e `go.sum` viene generato in build — niente `bpftool`, niente
 > `go mod tidy` manuale.
 
-> ContainerSentry monitora il kernel Linux, quindi deve girare su un host Linux. Su
+> KernelWatch monitora il kernel Linux, quindi deve girare su un host Linux. Su
 > Windows/macOS gira solo dentro una VM Linux (es. la VM di Docker Desktop), dove vede
 > il kernel di quella VM — utile per i test, non un vero deploy su host.
 
@@ -20,16 +20,16 @@
 
 ```bash
 cp .env.example .env
-# Imposta almeno CS_SERVER_NAME e un CS_API_TOKEN forte; configura le destinazioni
+# Imposta almeno KW_SERVER_NAME e un KW_API_TOKEN forte; configura le destinazioni
 # degli alert (webhook/Slack) se le vuoi.
 
 docker compose up -d --build
-docker compose logs -f containersentry
+docker compose logs -f kernelwatch
 ```
 
 ## Cosa configura Compose
 
-**Servizio `containersentry`**
+**Servizio `kernelwatch`**
 
 - `network_mode: host` — vede tutta l'attività di rete dei container.
 - `pid: "host"` — condivide il PID namespace dell'host così i PID host dell'eBPF si
@@ -41,16 +41,16 @@ docker compose logs -f containersentry
 - `security_opt: apparmor:unconfined` — richiesto per eBPF su alcune distro (Ubuntu).
 - Mount (ridotti al minimo per portabilità):
   - `/var/run/docker.sock:ro` — metadati container (per il futuro arricchimento).
-  - volume `containersentry-logs` — persiste `alerts.json`.
+  - volume `kernelwatch-logs` — persiste `alerts.json`.
   - Nessun mount BTF / bpffs / `/proc` necessario (niente CO-RE; `/proc` arriva da
     `pid:host`).
-- `healthcheck`: `pgrep containersentry`.
+- `healthcheck`: `pgrep kernelwatch`.
 - `restart: unless-stopped`.
 
 **Servizio `db` (TimescaleDB)**
 
 - `timescale/timescaledb:latest-pg16`.
-- Credenziali da `CS_DB_*`.
+- Credenziali da `KW_DB_*`.
 - `./migrations:/docker-entrypoint-initdb.d:ro` — l'SQL qui gira al **primo** avvio.
   La directory esiste (per ora solo un `.gitkeep`); metti qui i file `.sql` più avanti.
 - Bindato solo su `127.0.0.1:5432` — non esporre mai Postgres su internet.
@@ -72,7 +72,7 @@ docker compose logs -f containersentry
 
 **Stage 2 — runtime** (`debian:bookworm-slim`)
 1. Installa `libelf1`, `ca-certificates`.
-2. Crea `/var/log/containersentry`.
+2. Crea `/var/log/kernelwatch`.
 3. Copia il binario. Gira come root (necessario per eBPF); i privilegi sono ristretti
    a un set di capability mirato da `docker-compose.yml`.
 
@@ -81,9 +81,9 @@ docker compose logs -f containersentry
 L'obiettivo di design è **un'immagine, un `.env` per host**:
 
 ```bash
-git clone <repo> && cd containersentry
+git clone <repo> && cd kernelwatch
 cp .env.example .env
-# modifica CS_SERVER_NAME, CS_API_TOKEN, destinazioni alert
+# modifica KW_SERVER_NAME, KW_API_TOKEN, destinazioni alert
 docker compose up -d --build
 ```
 
@@ -92,15 +92,15 @@ docker compose up -d --build
 ```bash
 sudo apt install -y clang llvm libbpf-dev linux-libc-dev
 go generate ./...    # compila eBPF → internal/collector/tracer_bpf*.go
-go build -o containersentry .
-sudo ./containersentry   # serve root per caricare eBPF
+go build -o kernelwatch .
+sudo ./kernelwatch   # serve root per caricare eBPF
 ```
 
 > `go generate` esegue la direttiva in `internal/collector/gen.go`, così lo
 > scaffolding generato finisce nel package `collector`. Nessun `vmlinux.h` /
 > `bpftool` e nessun `go.sum` preesistente richiesti.
 
-La configurazione viene letta dall'ambiente del processo (esporta le variabili `CS_*`
+La configurazione viene letta dall'ambiente del processo (esporta le variabili `KW_*`
 o fai il source di un `.env`).
 
 ## Note operative
@@ -111,4 +111,4 @@ o fai il source di un `.env`).
   aggiungi una rotazione dei log per host a lunga esecuzione.
 - **Verificare che funzioni:** dopo `up`, esegui una shell in un *altro* container
   qualsiasi (`docker exec -it <c> sh`) e osserva comparire un alert di severità High
-  `shell execution inside container` in `docker compose logs -f containersentry`.
+  `shell execution inside container` in `docker compose logs -f kernelwatch`.

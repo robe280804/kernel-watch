@@ -68,7 +68,7 @@ Each alert carries a severity and a MITRE ATT&CK technique (TTP) + tactic.
 
 ## Severity threshold
 
-Whether an alert is actually delivered also depends on `CS_ALERT_MIN_SEVERITY`
+Whether an alert is actually delivered also depends on `KW_ALERT_MIN_SEVERITY`
 (see [configuration.md](configuration.md)). With the default `medium`, `low`
 alerts would be suppressed — though none of the current rules emit `low`.
 

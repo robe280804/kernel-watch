@@ -43,8 +43,8 @@ Non servono né `vmlinux.h` né un `go.sum` preesistente (`go mod download` gene
 ```bash
 sudo apt install -y clang llvm libbpf-dev linux-libc-dev
 go generate ./...
-go build -o containersentry .
-sudo ./containersentry
+go build -o kernelwatch .
+sudo ./kernelwatch
 ```
 
 ## Aggiungere una nuova regola di detection

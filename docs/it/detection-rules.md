@@ -70,7 +70,7 @@ Ogni alert porta una severità e una tecnica MITRE ATT&CK (TTP) + tattica.
 
 ## Soglia di severità
 
-Se un alert venga effettivamente consegnato dipende anche da `CS_ALERT_MIN_SEVERITY`
+Se un alert venga effettivamente consegnato dipende anche da `KW_ALERT_MIN_SEVERITY`
 (vedi [configuration.md](configuration.md)). Con il default `medium`, gli alert `low`
 sarebbero soppressi — anche se nessuna delle regole attuali emette `low`.
 

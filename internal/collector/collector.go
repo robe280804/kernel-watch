@@ -13,8 +13,8 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 
-	"containersentry/internal/config"
-	"containersentry/internal/container"
+	"kernelwatch/internal/config"
+	"kernelwatch/internal/container"
 )
 
 // Event types — must match EVENT_* constants in tracer.c

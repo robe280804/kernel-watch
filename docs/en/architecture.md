@@ -2,7 +2,7 @@
 
 ## Components
 
-ContainerSentry is a single Go binary built from five internal packages plus the
+KernelWatch is a single Go binary built from five internal packages plus the
 eBPF program. Each package has one clear responsibility.
 
 ```
@@ -61,9 +61,9 @@ sends it. `collector.Event` is the shared input type the detector consumes.
    name and timestamp.
 
 6. **Alerting** — `alerter.Send(alert)`:
-   - Drops the alert if its severity is below `CS_ALERT_MIN_SEVERITY`.
+   - Drops the alert if its severity is below `KW_ALERT_MIN_SEVERITY`.
    - Applies **per-container sliding-window rate limiting**
-     (`CS_ALERT_MAX_RATE` events per `CS_ALERT_RATE_WINDOW` seconds).
+     (`KW_ALERT_MAX_RATE` events per `KW_ALERT_RATE_WINDOW` seconds).
    - Stamps `ServerName` and (if missing) `Timestamp`.
    - Dispatches to every enabled destination: JSON log file (synchronous) and
      webhook + Slack (each in its own goroutine).

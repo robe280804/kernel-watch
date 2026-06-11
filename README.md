@@ -1,4 +1,4 @@
-# ContainerSentry
+# KernelWatch
 
 eBPF-based Host Intrusion Detection System for Docker containers.
 Monitors syscalls at kernel level — zero agents inside containers.
@@ -16,16 +16,16 @@ Monitors syscalls at kernel level — zero agents inside containers.
 
 ```bash
 # 1. Clone and configure
-git clone https://github.com/youruser/containersentry
-cd containersentry
+git clone https://github.com/youruser/kernelwatch
+cd kernelwatch
 cp .env.example .env
-# Edit .env — at minimum set CS_SERVER_NAME and CS_API_TOKEN
+# Edit .env — at minimum set KW_SERVER_NAME and KW_API_TOKEN
 
 # 2. Build and run
 docker compose up -d --build
 
 # 3. Watch alerts in real time
-docker compose logs -f containersentry
+docker compose logs -f kernelwatch
 ```
 
 ## Configuration
@@ -35,22 +35,22 @@ No config files — deploy the same image to any server, change only the `.env`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `CS_SERVER_NAME` | `containersentry-host` | Human-readable name for this host |
-| `CS_CONTAINER_WHITELIST` | _(empty = all)_ | Comma-separated containers to monitor |
-| `CS_CONTAINER_BLACKLIST` | `containersentry,portainer` | Containers to ignore |
-| `CS_ALERT_MIN_SEVERITY` | `medium` | Minimum severity: low / medium / high / critical |
-| `CS_ALERT_MAX_RATE` | `10` | Max alerts per container per window |
-| `CS_ALERT_RATE_WINDOW` | `60` | Rate window in seconds |
-| `CS_LOG_ENABLED` | `true` | Write alerts to JSON log file |
-| `CS_LOG_PATH` | `/var/log/containersentry/alerts.json` | Alert log path |
-| `CS_WEBHOOK_ENABLED` | `false` | Send alerts to webhook |
-| `CS_WEBHOOK_URL` | — | Webhook endpoint URL |
-| `CS_WEBHOOK_SECRET` | — | HMAC-SHA256 signing secret |
-| `CS_SLACK_ENABLED` | `false` | Send alerts to Slack |
-| `CS_SLACK_WEBHOOK_URL` | — | Slack incoming webhook URL |
-| `CS_SLACK_CHANNEL` | `#security-alerts` | Slack channel |
-| `CS_API_PORT` | `8080` | REST API port |
-| `CS_API_TOKEN` | — | Bearer token for API auth |
+| `KW_SERVER_NAME` | `kernelwatch-host` | Human-readable name for this host |
+| `KW_CONTAINER_WHITELIST` | _(empty = all)_ | Comma-separated containers to monitor |
+| `KW_CONTAINER_BLACKLIST` | `kernelwatch,portainer` | Containers to ignore |
+| `KW_ALERT_MIN_SEVERITY` | `medium` | Minimum severity: low / medium / high / critical |
+| `KW_ALERT_MAX_RATE` | `10` | Max alerts per container per window |
+| `KW_ALERT_RATE_WINDOW` | `60` | Rate window in seconds |
+| `KW_LOG_ENABLED` | `true` | Write alerts to JSON log file |
+| `KW_LOG_PATH` | `/var/log/kernelwatch/alerts.json` | Alert log path |
+| `KW_WEBHOOK_ENABLED` | `false` | Send alerts to webhook |
+| `KW_WEBHOOK_URL` | — | Webhook endpoint URL |
+| `KW_WEBHOOK_SECRET` | — | HMAC-SHA256 signing secret |
+| `KW_SLACK_ENABLED` | `false` | Send alerts to Slack |
+| `KW_SLACK_WEBHOOK_URL` | — | Slack incoming webhook URL |
+| `KW_SLACK_CHANNEL` | `#security-alerts` | Slack channel |
+| `KW_API_PORT` | `8080` | REST API port |
+| `KW_API_TOKEN` | — | Bearer token for API auth |
 
 ## Detection rules
 
@@ -68,10 +68,10 @@ No config files — deploy the same image to any server, change only the `.env`.
 
 ```bash
 # On the new server
-git clone https://github.com/youruser/containersentry
-cd containersentry
+git clone https://github.com/youruser/kernelwatch
+cd kernelwatch
 cp .env.example .env
-nano .env  # set CS_SERVER_NAME, CS_API_TOKEN, alert destinations
+nano .env  # set KW_SERVER_NAME, KW_API_TOKEN, alert destinations
 docker compose up -d --build
 ```
 
@@ -87,16 +87,16 @@ sudo apt install -y clang llvm libelf-dev linux-headers-$(uname -r)
 go generate ./...
 
 # Build
-go build -o containersentry .
+go build -o kernelwatch .
 
 # Run (requires root for eBPF)
-sudo ./containersentry
+sudo ./kernelwatch
 ```
 
 ## Project structure
 
 ```
-containersentry/
+kernelwatch/
 ├── ebpf/tracer.c              # eBPF program (kernel space) — hooks syscalls
 ├── internal/
 │   ├── config/config.go       # env var loading + validation

@@ -34,18 +34,18 @@ These were blocking a working build/run and have been fixed in-repo:
   (`e.Filename`) instead of `comm`, which at `sys_enter_execve` still holds the
   caller's name — so shell/tool/pkg-manager rules now actually fire.
 - **Cleanup**: removed the `strings` shim in `alerter.go` (real `import "strings"`),
-  renamed the startup log to "ContainerSentry starting", added `migrations/.gitkeep`,
+  renamed the startup log to "KernelWatch starting", added `migrations/.gitkeep`,
   removed a stray brace-expansion directory.
 
 ## Still incomplete / stubbed
 
 | Area | State | Detail |
 |---|---|---|
-| REST API | Not implemented | `CS_API_PORT`/`CS_API_TOKEN` exist; no HTTP server or handlers. |
+| REST API | Not implemented | `KW_API_PORT`/`KW_API_TOKEN` exist; no HTTP server or handlers. |
 | Dashboard (WebSocket) | Not implemented | Roadmap only. |
 | DB persistence | Not implemented | `Config.DSN()` ready; no connection, schema, or inserts. |
 | Docker enrichment | Stub | `dockerInspect()` always returns "not implemented"; name = short ID, image = empty. |
-| Ring-buffer sizing | No-op | `CS_EBPF_RINGBUF_SIZE` is loaded but not applied at eBPF load. |
+| Ring-buffer sizing | No-op | `KW_EBPF_RINGBUF_SIZE` is loaded but not applied at eBPF load. |
 | Tests | None | No `_test.go` files. |
 
 ## Remaining quirks worth fixing
@@ -68,7 +68,7 @@ mostly the "unglamorous but necessary" plumbing:
 2. Implement Docker-API enrichment (`dockerInspect` / wire `ParseDockerList`) so
    alerts carry real container names and images and name-based filtering works.
 3. REST API + persistence (TimescaleDB schema, inserts, authenticated query
-   endpoints using `CS_API_TOKEN`).
+   endpoints using `KW_API_TOKEN`).
 
 **Medium term (robustness)**
 4. Unit tests for the pure logic (rules, `extractContainerID`, rate limiter) and

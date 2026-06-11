@@ -3,8 +3,8 @@ package detector
 import (
 	"strings"
 
-	"containersentry/internal/alerter"
-	"containersentry/internal/collector"
+	"kernelwatch/internal/alerter"
+	"kernelwatch/internal/collector"
 )
 
 // Rule is a detection rule that inspects an event and returns an alert if triggered.

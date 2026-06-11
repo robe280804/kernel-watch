@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"containersentry/internal/config"
+	"kernelwatch/internal/config"
 )
 
 // Severity levels for alerts.
@@ -35,7 +35,7 @@ var severityRank = map[Severity]int{
 	SeverityCritical: 4,
 }
 
-// Alert represents a security event detected by ContainerSentry.
+// Alert represents a security event detected by KernelWatch.
 type Alert struct {
 	ID          string    `json:"id"`
 	ServerName  string    `json:"server_name"`
@@ -168,13 +168,13 @@ func (a *Alerter) sendWebhook(alert *Alert) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "ContainerSentry/1.0")
+	req.Header.Set("User-Agent", "KernelWatch/1.0")
 
 	// HMAC-SHA256 signature for webhook verification
 	if a.cfg.WebhookSecret != "" {
 		mac := hmac.New(sha256.New, []byte(a.cfg.WebhookSecret))
 		mac.Write(data)
-		req.Header.Set("X-ContainerSentry-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		req.Header.Set("X-KernelWatch-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
 
 	resp, err := a.httpClient.Do(req)
@@ -234,7 +234,7 @@ func (a *Alerter) sendSlack(alert *Alert) {
 
 	payload := slackPayload{
 		Channel:   a.cfg.SlackChannel,
-		Username:  "ContainerSentry",
+		Username:  "KernelWatch",
 		IconEmoji: ":shield:",
 		Blocks: []slackBlock{
 			{Type: "section", Text: &slackText{Type: "mrkdwn", Text: text}},

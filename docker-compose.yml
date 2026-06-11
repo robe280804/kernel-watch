@@ -1,10 +1,10 @@
 services:
 
-  # ── ContainerSentry daemon ──────────────────────────────────────────────────
-  containersentry:
+  # ── KernelWatch daemon ──────────────────────────────────────────────────
+  kernelwatch:
     build: .
-    image: containersentry:latest
-    container_name: containersentry
+    image: kernelwatch:latest
+    container_name: kernelwatch
     restart: unless-stopped
 
     # eBPF requires access to the host kernel.
@@ -27,7 +27,7 @@ services:
     #    offset (no CO-RE), so it needs neither /sys/kernel/btf nor /sys/fs/bpf.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro  # container metadata (future enrichment)
-      - containersentry-logs:/var/log/containersentry
+      - kernelwatch-logs:/var/log/kernelwatch
 
     # Network: host mode so we can see all container network events
     network_mode: host
@@ -44,11 +44,11 @@ services:
 
     # Override specific vars here if needed (takes precedence over .env)
     environment:
-      - CS_SERVER_NAME=${CS_SERVER_NAME:-my-server}
+      - KW_SERVER_NAME=${KW_SERVER_NAME:-my-server}
 
     # Health check: verify the process is running
     healthcheck:
-      test: ["CMD", "pgrep", "containersentry"]
+      test: ["CMD", "pgrep", "kernelwatch"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -57,23 +57,23 @@ services:
   # ── TimescaleDB (events storage) ────────────────────────────────────────────
   db:
     image: timescale/timescaledb:latest-pg16
-    container_name: containersentry-db
+    container_name: kernelwatch-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${CS_DB_NAME:-containersentry}
-      POSTGRES_USER: ${CS_DB_USER:-containersentry}
-      POSTGRES_PASSWORD: ${CS_DB_PASSWORD:-changeme}
+      POSTGRES_DB: ${KW_DB_NAME:-kernelwatch}
+      POSTGRES_USER: ${KW_DB_USER:-kernelwatch}
+      POSTGRES_PASSWORD: ${KW_DB_PASSWORD:-changeme}
     volumes:
       - db-data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d:ro  # auto-run on first start
     ports:
       - "127.0.0.1:5432:5432"  # localhost only — never expose to internet
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${CS_DB_USER:-containersentry}"]
+      test: ["CMD-SHELL", "pg_isready -U ${KW_DB_USER:-kernelwatch}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
 volumes:
-  containersentry-logs:
+  kernelwatch-logs:
   db-data:

@@ -53,10 +53,10 @@ Flow:
 
 ## `internal/config/config.go`
 
-**Role:** Load and validate all runtime configuration from `CS_*` environment
+**Role:** Load and validate all runtime configuration from `KW_*` environment
 variables. There are no config files.
 
-- `Config` struct — every field maps 1:1 to a `CS_*` variable (see
+- `Config` struct — every field maps 1:1 to a `KW_*` variable (see
   [configuration.md](configuration.md)).
 - `Load()` — applies defaults, then overrides from env, then `validate()`.
 - `validate()` — checks `AlertMinSeverity ∈ {low,medium,high,critical}`, `APIPort`
@@ -155,8 +155,8 @@ variables. There are no config files.
   to log (sync) + webhook + Slack (each in a goroutine).
 - `writeLog` — appends newline-delimited JSON to the file **and** emits a structured
   `slog.Warn`.
-- `sendWebhook` — POSTs JSON; if `CS_WEBHOOK_SECRET` is set, adds an
-  `X-ContainerSentry-Signature: sha256=<hmac>` header (HMAC-SHA256 of the body).
+- `sendWebhook` — POSTs JSON; if `KW_WEBHOOK_SECRET` is set, adds an
+  `X-KernelWatch-Signature: sha256=<hmac>` header (HMAC-SHA256 of the body).
 - `sendSlack` — builds a Slack Block-Kit message with a severity emoji and the
   MITRE line.
 - `isRateLimited(containerID)` — sliding window: evicts timestamps older than the
@@ -170,16 +170,16 @@ variables. There are no config files.
 
 ## Build & deploy files
 
-- **`go.mod`** — module `containersentry`, Go 1.22, single require:
+- **`go.mod`** — module `kernelwatch`, Go 1.22, single require:
   `github.com/cilium/ebpf v0.15.0`. (No `go.sum` committed yet; the Dockerfile
   `COPY go.sum` and `go mod download` will need it.)
 - **`Dockerfile`** — multi-stage: builder (`golang:1.22-bookworm` + clang/LLVM/
   libelf/headers, runs `go generate`, builds a stripped static binary) → runtime
   (`debian:bookworm-slim` + libelf, non-root user UID 1000). See
   [deployment.md](deployment.md).
-- **`docker-compose.yml`** — the `containersentry` daemon (host network, scoped
+- **`docker-compose.yml`** — the `kernelwatch` daemon (host network, scoped
   capabilities, host mounts, healthcheck) plus a `timescaledb` service
   (`./migrations` auto-run on first start, bound to localhost only).
-- **`.env.example`** — documented template of every `CS_*` variable.
+- **`.env.example`** — documented template of every `KW_*` variable.
 - **`README.md`** — top-level project readme.
 - **`docs/`** — this documentation (`en/` and `it/`).

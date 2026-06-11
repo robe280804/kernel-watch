@@ -7,7 +7,7 @@
 *.crt
 
 # Go binaries & build artifacts
-/containersentry
+/kernelwatch
 /system-sec
 *.exe
 *.exe~

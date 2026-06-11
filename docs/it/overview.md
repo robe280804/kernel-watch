@@ -1,8 +1,8 @@
 # Panoramica
 
-## Cos'è ContainerSentry?
+## Cos'è KernelWatch?
 
-ContainerSentry è un **sistema di rilevamento intrusioni a livello host (HIDS)**
+KernelWatch è un **sistema di rilevamento intrusioni a livello host (HIDS)**
 specializzato per **container Docker**. Osserva le syscall che i processi dei
 container effettuano e genera alert quando rileva comportamenti che un container di
 produzione sano non dovrebbe mai avere — ad esempio l'avvio di una shell, la lettura
@@ -25,7 +25,7 @@ eventi del kernel (qui, i punti di ingresso delle syscall). Rispetto alle altern
 - **vs. polling di `/proc`:** gli eventi vengono spinti nell'istante in cui la
   syscall scatta, senza buchi di campionamento.
 
-ContainerSentry usa i **tracepoint** (punti di strumentazione stabili del kernel) su
+KernelWatch usa i **tracepoint** (punti di strumentazione stabili del kernel) su
 quattro syscall e fa fluire gli eventi verso lo spazio utente tramite un **ring
 buffer** (`BPF_MAP_TYPE_RINGBUF`), un canale kernel→userspace ad alto throughput e a
 basso lock.
@@ -85,7 +85,7 @@ collegato in `main.go` con shutdown pulito.
 
 **Cosa è incompleto o stub** (lista completa in [roadmap.md](roadmap.md))
 
-- REST API / dashboard: una porta è configurata (`CS_API_PORT`) ma **non esistono
+- REST API / dashboard: una porta è configurata (`KW_API_PORT`) ma **non esistono
   handler HTTP**.
 - Persistenza su database: TimescaleDB è definito in Compose, ma **non c'è schema né
   logica di insert**, e la directory `./migrations` non esiste ancora.

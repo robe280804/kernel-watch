@@ -15,6 +15,13 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /build
 
+# Allow the toolchain to add missing go.mod/go.sum entries on the fly.
+# `go generate` runs `go run .../cmd/bpf2go`, whose transitive dependencies are
+# NOT covered by `go mod download github.com/cilium/ebpf`; without a committed
+# go.sum this would fail with "missing go.sum entry". -mod=mod lets go fetch and
+# record them in-build, so a fresh clone needs no manual `go mod tidy`.
+ENV GOFLAGS=-mod=mod
+
 # Download dependencies first (better layer caching).
 # go.sum is optional: the glob tolerates its absence and `go mod download`
 # generates it in-build, so a fresh clone needs no manual `go mod tidy`.
@@ -31,7 +38,7 @@ RUN go generate ./...
 
 # Build the Go binary (static, no CGO for the Go parts)
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w" -o /containersentry .
+    go build -ldflags="-s -w" -o /kernelwatch .
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -43,13 +50,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create log directory
-RUN mkdir -p /var/log/containersentry
+RUN mkdir -p /var/log/kernelwatch
 
 # Copy binary
-COPY --from=builder /containersentry /usr/local/bin/containersentry
+COPY --from=builder /kernelwatch /usr/local/bin/kernelwatch
 
 # ── Privileges ────────────────────────────────────────────────────────────────
-# ContainerSentry must load eBPF programs and attach tracepoints, which require
+# KernelWatch must load eBPF programs and attach tracepoints, which require
 # *effective* CAP_SYS_ADMIN (plus SYS_PTRACE / NET_ADMIN). A non-root USER in a
 # container does NOT retain effective capabilities granted via `cap_add` (that
 # would need ambient-capability plumbing), so eBPF loading would silently fail.
@@ -61,4 +68,4 @@ COPY --from=builder /containersentry /usr/local/bin/containersentry
 #   - SYS_PTRACE : read /proc/<pid>/cgroup for container mapping
 #   - NET_ADMIN  : network tracepoints
 
-ENTRYPOINT ["/usr/local/bin/containersentry"]
+ENTRYPOINT ["/usr/local/bin/kernelwatch"]

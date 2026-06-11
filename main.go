@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"containersentry/internal/alerter"
-	"containersentry/internal/collector"
-	"containersentry/internal/config"
-	"containersentry/internal/container"
-	"containersentry/internal/detector"
+	"kernelwatch/internal/alerter"
+	"kernelwatch/internal/collector"
+	"kernelwatch/internal/config"
+	"kernelwatch/internal/container"
+	"kernelwatch/internal/detector"
 )
 
 func main() {
@@ -25,7 +25,7 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
-	slog.Info("ContainerSentry starting")
+	slog.Info("KernelWatch starting")
 
 	// ── Load config from environment ──────────────────────────────────────────
 	cfg, err := config.Load()
