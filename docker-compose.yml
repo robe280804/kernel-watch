@@ -25,8 +25,15 @@ services:
     #  - /proc is provided by pid:host below (no bind mount needed)
     #  - no BTF / bpffs mounts: the program reads tracepoint args by fixed ABI
     #    offset (no CO-RE), so it needs neither /sys/kernel/btf nor /sys/fs/bpf.
+    #  - tracefs/debugfs ARE required: attaching a syscall tracepoint reads the
+    #    tracepoint id from /sys/kernel/tracing (or /sys/kernel/debug/tracing).
+    #    These aren't propagated into the container's mount namespace, so bind
+    #    them from the host or attach fails with "neither debugfs nor tracefs
+    #    are mounted". (They must be mounted on the host first — see deployment.md.)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro  # container metadata (future enrichment)
+      - /sys/kernel/tracing:/sys/kernel/tracing:rw    # tracepoint id lookup (tracefs)
+      - /sys/kernel/debug:/sys/kernel/debug:rw        # fallback path (debugfs/tracing)
       - kernelwatch-logs:/var/log/kernelwatch
 
     # Network: host mode so we can see all container network events
