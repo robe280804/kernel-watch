@@ -1,0 +1,57 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Go binaries & build artifacts
+/containersentry
+/system-sec
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/bin/
+/dist/
+/build/
+
+# eBPF compiled objects
+*.o
+*.bpf.o
+ebpf/*.o
+internal/**/*.o
+
+# Go workspace / tooling
+go.work
+go.work.sum
+vendor/
+
+# Coverage & profiling
+*.cov
+coverage.*
+*.prof
+
+# Database / migrations runtime data
+*.db
+*.sqlite
+*.sqlite3
+/data/
+
+# Logs
+*.log
+logs/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db

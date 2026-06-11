@@ -1,0 +1,79 @@
+services:
+
+  # ── ContainerSentry daemon ──────────────────────────────────────────────────
+  containersentry:
+    build: .
+    image: containersentry:latest
+    container_name: containersentry
+    restart: unless-stopped
+
+    # eBPF requires access to the host kernel.
+    # These are the minimum required privileges.
+    privileged: false
+    # Run as root (eBPF needs effective caps) but with a tightly scoped set:
+    # drop everything, then add back only what's required.
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN     # load eBPF programs into the kernel
+      - SYS_PTRACE    # read /proc/<pid>/cgroup for container mapping
+      - NET_ADMIN     # attach network tracepoints
+    security_opt:
+      - apparmor:unconfined  # required for eBPF on some distros (Ubuntu)
+
+    # Mounts kept minimal for portability across any Linux host:
+    #  - /proc is provided by pid:host below (no bind mount needed)
+    #  - no BTF / bpffs mounts: the program reads tracepoint args by fixed ABI
+    #    offset (no CO-RE), so it needs neither /sys/kernel/btf nor /sys/fs/bpf.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # container metadata (future enrichment)
+      - containersentry-logs:/var/log/containersentry
+
+    # Network: host mode so we can see all container network events
+    network_mode: host
+
+    # PID: share the host PID namespace. eBPF reports host-global PIDs; with
+    # pid:host the container's /proc reflects the host, so the mapper can read
+    # /proc/<pid>/cgroup and resolve which container a PID belongs to.
+    # Without this, container resolution always fails and NO alerts fire.
+    pid: "host"
+
+    # ── Configuration via environment variables ─────────────────────────────
+    # Copy .env.example to .env and adjust before running
+    env_file: .env
+
+    # Override specific vars here if needed (takes precedence over .env)
+    environment:
+      - CS_SERVER_NAME=${CS_SERVER_NAME:-my-server}
+
+    # Health check: verify the process is running
+    healthcheck:
+      test: ["CMD", "pgrep", "containersentry"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── TimescaleDB (events storage) ────────────────────────────────────────────
+  db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: containersentry-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${CS_DB_NAME:-containersentry}
+      POSTGRES_USER: ${CS_DB_USER:-containersentry}
+      POSTGRES_PASSWORD: ${CS_DB_PASSWORD:-changeme}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro  # auto-run on first start
+    ports:
+      - "127.0.0.1:5432:5432"  # localhost only — never expose to internet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CS_DB_USER:-containersentry}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  containersentry-logs:
+  db-data:

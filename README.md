@@ -6,9 +6,11 @@ Monitors syscalls at kernel level — zero agents inside containers.
 ## Requirements
 
 - Linux kernel 5.15+ (6.x recommended)
-- `/sys/kernel/btf/vmlinux` present (BTF support)
 - Docker + Docker Compose
-- `clang` + `llvm` (for building the eBPF program)
+- For source builds: `clang`, `llvm`, `libbpf-dev`, `linux-libc-dev`
+
+> Fully reproducible: `git clone` + `docker compose up -d --build` is enough on any
+> Linux host — the eBPF program is self-contained (no host BTF / `vmlinux.h`).
 
 ## Quick start
 
