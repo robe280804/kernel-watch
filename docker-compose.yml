@@ -42,6 +42,10 @@ services:
       - /sys/kernel/tracing:/sys/kernel/tracing:rw    # tracepoint id lookup (tracefs)
       - /sys/kernel/debug:/sys/kernel/debug:rw        # fallback path (debugfs/tracing)
       - kernelwatch-logs:/var/log/kernelwatch
+      # Host auth log (read-only) for the SSH brute-force tailer. Only consumed
+      # when KW_AUTHLOG_ENABLED=true; set KW_AUTHLOG_PATH=/hostlog/auth.log
+      # (Debian/Ubuntu) or /hostlog/secure (RHEL/CentOS) to match your distro.
+      - /var/log:/hostlog:ro
 
     # Network: host mode so we can see all container network events
     network_mode: host

@@ -55,3 +55,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local planning notes (not tracked)
+/feat/

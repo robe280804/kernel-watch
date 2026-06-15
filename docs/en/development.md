@@ -49,35 +49,39 @@ sudo ./kernelwatch
 
 ## Adding a new detection rule
 
-1. Write a rule in `internal/detector/detector.go`:
+Rules are **data**, not Go code. You almost never need to recompile — add a rule
+in YAML and load it via `KW_RULES_FILE` / `KW_RULES_DIR` (see
+[detection-rules.md](detection-rules.md#rule-engine-yaml-falco-style)).
 
-   ```go
-   func ruleCryptominerExec(e collector.Event) *alerter.Alert {
-       if e.Type != collector.EventExecve {
-           return nil
-       }
-       miners := []string{"xmrig", "minerd", "cpuminer"}
-       comm := strings.ToLower(e.ProcessName)
-       for _, m := range miners {
-           if comm == m {
-               return &alerter.Alert{
-                   Severity:    alerter.SeverityCritical,
-                   Reason:      "cryptominer executed inside container",
-                   MITRETTP:    "T1496",
-                   MITRETactic: "Impact",
-                   Details:     map[string]any{"binary": e.ProcessName},
-               }
-           }
-       }
-       return nil
-   }
+1. Write the rule (a condition over the field set, optionally a `lineage:`
+   matrix), e.g. a cryptominer detector:
+
+   ```yaml
+   lists:
+     miners: [xmrig, minerd, cpuminer]
+   rules:
+     - id: cryptominer_exec
+       scope: all
+       tactic: Impact
+       technique: T1496
+       tags: [mining]
+       condition: "evt.type = execve and in_list(proc.exe_base, $miners)"
+       severity: critical
+       reason: "cryptominer executed"
+       details: { binary: proc.exe_base }
    ```
 
-2. Register it in `New()`'s `d.rules = []Rule{...}` slice. Order matters
-   (first match wins) — put more specific/important rules earlier.
+2. Validate it without root or eBPF: `KW_RULES_FILE=my.yaml kernelwatch --validate`.
 
-3. The detector auto-stamps container/process/syscall/timestamp; your rule only
-   sets severity, reason, MITRE fields and `Details`.
+3. To change a built-in rule, override it by id (`override: true`), extend it
+   (`append: true`), or disable it (`enabled: false`) in your overlay file.
+
+The detector auto-stamps scope/container/process/syscall/timestamp; your rule
+only sets the condition, severity, reason, MITRE fields and `details`.
+
+To change the **embedded default** ruleset itself, edit
+`internal/ruleengine/default.yaml` (covered by `go test ./internal/ruleengine/...`
+and the detector parity test). The DSL/engine lives in `internal/ruleengine/`.
 
 ## Adding a new syscall hook
 
