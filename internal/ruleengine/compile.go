@@ -71,7 +71,7 @@ func compileRuleset(f *File) ([]*CompiledRule, error) {
 	return rules, nil
 }
 
-func compileRule(spec *RuleSpec, lists, resolvedMacros map[string]string) (*CompiledRule, error) {
+func compileRule(spec *RuleSpec, lists map[string][]string, resolvedMacros map[string]string) (*CompiledRule, error) {
 	if spec.ID == "" {
 		return nil, fmt.Errorf("missing id")
 	}
@@ -125,7 +125,7 @@ func compileRule(spec *RuleSpec, lists, resolvedMacros map[string]string) (*Comp
 	return cr, nil
 }
 
-func compileArm(a *ArmSpec, lists, resolvedMacros map[string]string) (compiledArm, error) {
+func compileArm(a *ArmSpec, lists map[string][]string, resolvedMacros map[string]string) (compiledArm, error) {
 	arm := compiledArm{when: map[Lineage]bool{}}
 	if len(a.When) == 0 {
 		arm.whenAny = true
