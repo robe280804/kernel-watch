@@ -7,6 +7,18 @@ import (
 	"kernelwatch/internal/collector"
 )
 
+// ruleScope is a bitmask of the scopes a rule applies to. A rule is evaluated
+// only when the event's scope is in its mask, and its Match body branches on the
+// passed scope for any per-scope behavior.
+type ruleScope uint8
+
+const (
+	scopeContainer ruleScope = 1 << iota
+	scopeHost
+)
+
+const scopeAll = scopeContainer | scopeHost
+
 // Rule is a declarative detection unit (Falco-inspired): static metadata plus a
 // Match function that returns a *hit when the event is suspicious. Returning nil
 // means "no match" — including the deliberate suppression of benign lineage.
@@ -14,10 +26,11 @@ type Rule struct {
 	ID        string
 	Desc      string
 	Severity  alerter.Severity // default; a hit may override (e.g. lineage escalation)
+	Scope     ruleScope        // which scopes this rule applies to
 	Tactic    string           // MITRE ATT&CK tactic
 	Technique string           // MITRE ATT&CK technique id
 	Tags      []string
-	Match     func(e collector.Event, c *classifier) *hit
+	Match     func(e collector.Event, c *classifier, scope ruleScope) *hit
 }
 
 // hit is the result of a matched rule.
@@ -42,6 +55,12 @@ func defaultRules() []Rule {
 		rulePackageManager,
 		ruleSensitiveFileAccess,
 		ruleCredentialFileAccess,
+		// Host-scope rules (rules_host.go).
+		ruleHostUserManipulation,
+		ruleHostLogTampering,
+		ruleHostDockerSock,
+		ruleHostTmpExec,
+		ruleHostShellFromService,
 	}
 }
 
@@ -49,14 +68,14 @@ func defaultRules() []Rule {
 
 var ruleShellInContainer = Rule{
 	ID: "shell_in_container", Desc: "Shell executed inside a container",
-	Severity: alerter.SeverityHigh, Tactic: "Execution", Technique: "T1059",
+	Severity: alerter.SeverityHigh, Scope: scopeContainer, Tactic: "Execution", Technique: "T1059",
 	Tags: []string{"container", "shell"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		bin := execBinary(e)
 		if e.Type != collector.EventExecve || !shells[bin] {
 			return nil
 		}
-		switch c.classify(e.Ancestry) {
+		switch c.classify(e.Ancestry, scope) {
 		case lineageNetwork:
 			return &hit{Severity: alerter.SeverityCritical,
 				Reason:  "interactive shell spawned by network-facing service (possible RCE/web-shell)",
@@ -70,82 +89,109 @@ var ruleShellInContainer = Rule{
 }
 
 var ruleNetworkTool = Rule{
-	ID: "network_tool", Desc: "Network/recon tool executed inside a container",
-	Severity: alerter.SeverityMedium, Tactic: "Discovery", Technique: "T1046",
-	Tags: []string{"container", "network"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	ID: "network_tool", Desc: "Network/recon tool executed",
+	Severity: alerter.SeverityMedium, Scope: scopeAll, Tactic: "Discovery", Technique: "T1046",
+	Tags: []string{"network"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		bin := execBinary(e)
 		if e.Type != collector.EventExecve || !netTools[bin] {
 			return nil
 		}
-		switch c.classify(e.Ancestry) {
+		switch c.classify(e.Ancestry, scope) {
 		case lineageNetwork:
 			return &hit{Severity: alerter.SeverityHigh,
 				Reason:  "network tool spawned by network-facing service (possible post-exploitation)",
 				Details: map[string]any{"tool": bin, "spawned_by": c.networkParent(e.Ancestry)}}
 		case lineageTrusted:
 			return nil // benign: healthcheck/cron-driven curl/wget
+		case lineageInteractive:
+			// Admin running curl/wget in an SSH session is daily ops; recon
+			// scanners (nmap/masscan) are not, regardless of who launched them.
+			if highNetTools[bin] {
+				return &hit{Severity: alerter.SeverityHigh,
+					Reason: "recon scanner executed in interactive session", Details: map[string]any{"tool": bin}}
+			}
+			return nil
 		default:
 			sev := alerter.SeverityMedium
 			if highNetTools[bin] {
 				sev = alerter.SeverityHigh
 			}
-			return &hit{Severity: sev, Reason: "network tool executed inside container", Details: map[string]any{"tool": bin}}
+			return &hit{Severity: sev, Reason: "network tool executed", Details: map[string]any{"tool": bin}}
 		}
 	},
 }
 
 var rulePackageManager = Rule{
-	ID: "package_manager", Desc: "Package manager executed inside a running container",
-	Severity: alerter.SeverityMedium, Tactic: "Execution", Technique: "T1072",
-	Tags: []string{"container", "package-manager"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	ID: "package_manager", Desc: "Package manager executed in a running environment",
+	Severity: alerter.SeverityMedium, Scope: scopeAll, Tactic: "Execution", Technique: "T1072",
+	Tags: []string{"package-manager"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		bin := execBinary(e)
 		if e.Type != collector.EventExecve || !pkgManagers[bin] {
 			return nil
 		}
-		switch c.classify(e.Ancestry) {
+		switch c.classify(e.Ancestry, scope) {
 		case lineageNetwork:
-			return &hit{Severity: alerter.SeverityHigh,
+			// A package manager driven by a network-facing service is an attacker
+			// installing tools — and on the host that is the only case worth firing.
+			sev := alerter.SeverityHigh
+			if scope == scopeHost {
+				sev = alerter.SeverityCritical
+			}
+			return &hit{Severity: sev,
 				Reason:  "package manager spawned by network-facing service (attacker installing tools)",
 				Details: map[string]any{"package_manager": bin, "spawned_by": c.networkParent(e.Ancestry)}}
-		case lineageTrusted:
-			return nil // benign: unattended-upgrades / image-build style cron jobs
 		default:
+			// On the host, routine admin/cron/unattended package operations are
+			// constant — only the network-lineage case above is interesting.
+			if scope == scopeHost {
+				return nil
+			}
+			if c.classify(e.Ancestry, scope) == lineageTrusted {
+				return nil // benign: unattended-upgrades / image-build style cron jobs
+			}
 			return &hit{Reason: "package manager executed inside running container", Details: map[string]any{"package_manager": bin}}
 		}
 	},
 }
 
 var rulePrivilegedProcess = Rule{
-	ID: "privilege_escalation", Desc: "Privilege-escalation tool executed in a container",
-	Severity: alerter.SeverityHigh, Tactic: "Privilege Escalation", Technique: "T1548",
-	Tags: []string{"container", "privesc"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	ID: "privilege_escalation", Desc: "Privilege-escalation tool executed",
+	Severity: alerter.SeverityHigh, Scope: scopeAll, Tactic: "Privilege Escalation", Technique: "T1548",
+	Tags: []string{"privesc"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		bin := execBinary(e)
 		if e.Type != collector.EventExecve || !privTools[bin] {
 			return nil
 		}
-		switch c.classify(e.Ancestry) {
+		switch c.classify(e.Ancestry, scope) {
 		case lineageNetwork:
 			return &hit{Severity: alerter.SeverityCritical,
 				Reason:  "privilege escalation tool spawned by network-facing service",
 				Details: map[string]any{"tool": bin, "spawned_by": c.networkParent(e.Ancestry)}}
 		case lineageTrusted:
 			return nil
+		case lineageInteractive:
+			// sudo/su in an admin SSH session is every login; namespace/chroot
+			// tooling is not, so those still fire.
+			if interactiveBenignPriv[bin] {
+				return nil
+			}
+			return &hit{Reason: "privilege/namespace tool executed in interactive session", Details: map[string]any{"tool": bin}}
 		default:
-			return &hit{Reason: "privilege escalation tool executed in container", Details: map[string]any{"tool": bin}}
+			return &hit{Reason: "privilege escalation tool executed", Details: map[string]any{"tool": bin}}
 		}
 	},
 }
 
 // ruleReverseShell fires on argv signatures that are essentially never benign,
-// regardless of lineage.
+// regardless of lineage or scope.
 var ruleReverseShell = Rule{
 	ID: "reverse_shell", Desc: "Reverse-shell / remote-exec pattern in command line",
-	Severity: alerter.SeverityCritical, Tactic: "Execution", Technique: "T1059",
-	Tags: []string{"container", "reverse-shell", "c2"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	Severity: alerter.SeverityCritical, Scope: scopeAll, Tactic: "Execution", Technique: "T1059",
+	Tags: []string{"reverse-shell", "c2"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		if e.Type != collector.EventExecve || e.CmdLine == "" {
 			return nil
 		}
@@ -168,18 +214,14 @@ var ruleReverseShell = Rule{
 }
 
 // ruleContainerDrift fires when a binary is executed from a writable/ephemeral
-// path — a high-precision indicator of a runtime-introduced executable (dropper,
-// miner, staged payload) that was never part of the immutable image.
-//
-// NOTE: argv[0]-vs-path masquerade detection (T1036.005) was intentionally left
-// out of this first cut: login shells ("-bash") and busybox applets routinely
-// have argv[0] differ from the exec path, which would generate false positives.
-// Image-manifest comparison is the precise way to do drift and is a Phase 3 item.
+// path inside a container — a high-precision indicator of a runtime-introduced
+// executable (dropper, miner, staged payload). The host analog is host_tmp_exec
+// (which excludes /run, since systemd legitimately uses it on the host).
 var ruleContainerDrift = Rule{
 	ID: "container_drift", Desc: "Execution of a binary from a writable/ephemeral path",
-	Severity: alerter.SeverityHigh, Tactic: "Defense Evasion", Technique: "T1036",
+	Severity: alerter.SeverityHigh, Scope: scopeContainer, Tactic: "Defense Evasion", Technique: "T1036",
 	Tags: []string{"container", "drift"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		if e.Type != collector.EventExecve || e.Filename == "" {
 			return nil
 		}
@@ -196,25 +238,37 @@ var ruleContainerDrift = Rule{
 
 // rulePersistence fires on a WRITE-mode open of a location used to survive
 // reboots or hijack execution (cron, systemd units, ld.so.preload, ssh keys…).
+// On the host it uses a broader path set and suppresses trusted writers
+// (package managers, init, cloud bootstrap).
 var rulePersistence = Rule{
 	ID: "persistence", Desc: "Write to a persistence-sensitive location",
-	Severity: alerter.SeverityHigh, Tactic: "Persistence", Technique: "T1543",
-	Tags: []string{"container", "persistence"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	Severity: alerter.SeverityHigh, Scope: scopeAll, Tactic: "Persistence", Technique: "T1543",
+	Tags: []string{"persistence"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		if e.Type != collector.EventOpen || e.Arg1&writeFlagMask == 0 {
 			return nil // not an open, or read-only
 		}
-		for _, p := range persistenceFiles {
-			if strings.HasPrefix(e.Filename, p) {
-				sev := alerter.SeverityHigh
-				// ld.so.preload is the classic userland-rootkit hook → critical.
-				if strings.HasPrefix(e.Filename, "/etc/ld.so.preload") {
-					sev = alerter.SeverityCritical
-				}
-				return &hit{Severity: sev, Reason: "write to persistence-sensitive location", Details: map[string]any{"file": e.Filename}}
-			}
+		matched := false
+		if scope == scopeHost {
+			matched = hasAnyPrefix(e.Filename, hostPersistencePrefixes) ||
+				containsAny(e.Filename, hostPersistenceSubstrings)
+		} else {
+			matched = hasAnyPrefix(e.Filename, persistenceFiles)
 		}
-		return nil
+		if !matched {
+			return nil
+		}
+		// On the host, package managers / init / cloud-init write units, cron
+		// entries and ssh config all the time — suppress those.
+		if scope == scopeHost && c.trustedWriter(writerChain(e)) {
+			return nil
+		}
+		sev := alerter.SeverityHigh
+		// ld.so.preload is the classic userland-rootkit hook → critical.
+		if strings.HasPrefix(e.Filename, "/etc/ld.so.preload") {
+			sev = alerter.SeverityCritical
+		}
+		return &hit{Severity: sev, Reason: "write to persistence-sensitive location", Details: map[string]any{"file": e.Filename}}
 	},
 }
 
@@ -222,67 +276,88 @@ var rulePersistence = Rule{
 // another process's memory (code injection, credential theft).
 var ruleProcessInjection = Rule{
 	ID: "process_injection", Desc: "ptrace-based process injection/manipulation",
-	Severity: alerter.SeverityHigh, Tactic: "Privilege Escalation", Technique: "T1055.008",
-	Tags: []string{"container", "injection"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	Severity: alerter.SeverityHigh, Scope: scopeAll, Tactic: "Privilege Escalation", Technique: "T1055.008",
+	Tags: []string{"injection"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		if e.Type != collector.EventPtrace {
 			return nil
 		}
 		// PTRACE_POKETEXT=4, POKEDATA=5, POKEUSR=6, SETREGS=13, ATTACH=16, SEIZE=0x4206.
 		switch e.Arg1 {
 		case 4, 5, 6, 13, 16, 0x4206:
-			return &hit{Reason: "ptrace process injection/manipulation inside container", Details: map[string]any{"request": e.Arg1, "target_pid": e.Arg2}}
+			return &hit{Reason: "ptrace process injection/manipulation", Details: map[string]any{"request": e.Arg1, "target_pid": e.Arg2}}
 		}
 		return nil
 	},
 }
 
-// ruleKernelModuleLoad fires when a container loads a kernel module — almost
-// always a rootkit or kernel-level tampering attempt.
+// ruleKernelModuleLoad fires when a kernel module is loaded. From a container
+// this is almost always a rootkit (Critical); on the host, init/udev/dkms load
+// modules legitimately, so trusted lineage is suppressed and the rest is High.
 var ruleKernelModuleLoad = Rule{
-	ID: "kernel_module_load", Desc: "Kernel module loaded from a container",
-	Severity: alerter.SeverityCritical, Tactic: "Persistence", Technique: "T1547.006",
-	Tags: []string{"container", "rootkit", "kernel"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	ID: "kernel_module_load", Desc: "Kernel module loaded",
+	Severity: alerter.SeverityCritical, Scope: scopeAll, Tactic: "Persistence", Technique: "T1547.006",
+	Tags: []string{"rootkit", "kernel"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		if e.Type != collector.EventModule {
 			return nil
+		}
+		if scope == scopeHost {
+			if c.trustedWriter(writerChain(e)) || c.classify(e.Ancestry, scope) == lineageTrusted {
+				return nil // systemd/udevd/kmod/dkms loading a module
+			}
+			return &hit{Severity: alerter.SeverityHigh, Reason: "kernel module loaded on host from untrusted lineage (possible rootkit)"}
 		}
 		return &hit{Reason: "kernel module loaded from container (possible rootkit)"}
 	},
 }
 
-// ruleBPFProgLoad fires when a container loads an eBPF program (bpf(BPF_PROG_LOAD))
-// — a powerful defense-evasion / kernel-rootkit primitive that application
-// containers should never use.
+// ruleBPFProgLoad fires when an eBPF program is loaded. Application containers
+// should never do this (High); on a Docker host, systemd/dockerd/containerd load
+// BPF legitimately, so trusted lineage is suppressed.
 var ruleBPFProgLoad = Rule{
-	ID: "bpf_prog_load", Desc: "eBPF program loaded from a container",
-	Severity: alerter.SeverityHigh, Tactic: "Defense Evasion", Technique: "T1562.001",
-	Tags: []string{"container", "ebpf", "evasion"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	ID: "bpf_prog_load", Desc: "eBPF program loaded",
+	Severity: alerter.SeverityHigh, Scope: scopeAll, Tactic: "Defense Evasion", Technique: "T1562.001",
+	Tags: []string{"ebpf", "evasion"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		const bpfProgLoad = 5 // BPF_PROG_LOAD
 		if e.Type != collector.EventBPF || e.Arg1 != bpfProgLoad {
 			return nil
 		}
-		return &hit{Reason: "eBPF program loaded from container (possible evasion/rootkit)", Details: map[string]any{"bpf_cmd": e.Arg1}}
+		if scope == scopeHost && c.trustedWriter(writerChain(e)) {
+			return nil // dockerd/containerd/systemd load BPF on Docker hosts
+		}
+		return &hit{Reason: "eBPF program loaded (possible evasion/rootkit)", Details: map[string]any{"bpf_cmd": e.Arg1}}
 	},
 }
 
-// ── open rules (path-based; no lineage) ──────────────────────────────────────
+// ── open rules (path-based) ──────────────────────────────────────────────────
 
 var ruleSensitiveFileAccess = Rule{
-	ID: "sensitive_file", Desc: "Sensitive file accessed by a container",
-	Severity: alerter.SeverityMedium, Tactic: "Collection", Technique: "T1005",
-	Tags: []string{"container", "file"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	ID: "sensitive_file", Desc: "Sensitive file accessed",
+	Severity: alerter.SeverityMedium, Scope: scopeAll, Tactic: "Collection", Technique: "T1005",
+	Tags: []string{"file"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		if e.Type != collector.EventOpen {
 			return nil
+		}
+		if scope == scopeHost {
+			// Host reads of /etc/passwd, /etc/shadow, sudoers etc. are constant
+			// (NSS, sudo, sshd) — only a WRITE is interesting. docker.sock and ssh
+			// keys are owned by the dedicated host rules.
+			if e.Arg1&writeFlagMask == 0 {
+				return nil
+			}
+			if e.Filename == "/var/run/docker.sock" || strings.HasPrefix(e.Filename, "/root/.ssh") {
+				return nil
+			}
 		}
 		for _, p := range sensitiveFiles {
 			if strings.HasPrefix(e.Filename, p) {
 				if e.Filename == "/var/run/docker.sock" {
 					return &hit{Severity: alerter.SeverityCritical, Reason: "docker socket accessed by container (container-escape vector)", Details: map[string]any{"file": e.Filename}}
 				}
-				return &hit{Reason: "sensitive file accessed by container", Details: map[string]any{"file": e.Filename}}
+				return &hit{Reason: "sensitive file accessed", Details: map[string]any{"file": e.Filename}}
 			}
 		}
 		return nil
@@ -290,17 +365,17 @@ var ruleSensitiveFileAccess = Rule{
 }
 
 var ruleCredentialFileAccess = Rule{
-	ID: "credential_file", Desc: "Credential file accessed by a container",
-	Severity: alerter.SeverityHigh, Tactic: "Credential Access", Technique: "T1552",
-	Tags: []string{"container", "credentials"},
-	Match: func(e collector.Event, c *classifier) *hit {
+	ID: "credential_file", Desc: "Credential file accessed",
+	Severity: alerter.SeverityHigh, Scope: scopeAll, Tactic: "Credential Access", Technique: "T1552",
+	Tags: []string{"credentials"},
+	Match: func(e collector.Event, c *classifier, scope ruleScope) *hit {
 		if e.Type != collector.EventOpen {
 			return nil
 		}
-		for _, p := range credFiles {
-			if strings.HasPrefix(e.Filename, p) {
-				return &hit{Reason: "credential file accessed by container", Details: map[string]any{"file": e.Filename}}
-			}
+		// Substring (not prefix) match so per-user paths like
+		// /home/<user>/.aws/credentials hit on the host too.
+		if containsAny(e.Filename, credFiles) {
+			return &hit{Reason: "credential file accessed", Details: map[string]any{"file": e.Filename}}
 		}
 		return nil
 	},
@@ -333,4 +408,31 @@ func processName(e collector.Event) string {
 		return baseName(e.Filename)
 	}
 	return e.ProcessName
+}
+
+// writerChain is the process's own comm followed by its ancestry — the full set
+// of names a "is this a trusted writer?" check should consider, since the acting
+// process (e.g. dpkg, rsyslogd) is itself the writer, not an ancestor.
+func writerChain(e collector.Event) []string {
+	return append([]string{e.ProcessName}, e.Ancestry...)
+}
+
+// hasAnyPrefix reports whether s starts with any of the given prefixes.
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsAny reports whether s contains any of the given substrings.
+func containsAny(s string, subs []string) bool {
+	for _, sub := range subs {
+		if sub != "" && strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,6 +1,10 @@
 package detector
 
-import "strings"
+import (
+	"strings"
+
+	"kernelwatch/internal/config"
+)
 
 // ── Binary category lists (detection-as-code) ───────────────────────────────
 // Reusable value sets, Falco-style. Matched on the executed binary's basename.
@@ -73,49 +77,123 @@ var defaultNetworkParents = []string{
 	"mysqld", "postgres", "redis-server", "memcached", "tomcat", "catalina.sh",
 }
 
-// classifier decides whether an event's ancestry is network-facing or trusted.
-type classifier struct {
-	trusted map[string]bool
-	network map[string]bool
+// defaultInteractiveParents mark an interactive administrator session. On the
+// host, `sudo`/`su` under one of these is daily ops; the same under a service
+// runtime is an incident. Network lineage still wins over interactive.
+var defaultInteractiveParents = []string{
+	"sshd", "login", "getty", "agetty", "mgetty",
+	"tmux", "tmux: server", "screen", "systemd-logind",
 }
 
-func newClassifier(extraTrusted, extraNetwork []string) *classifier {
-	c := &classifier{trusted: map[string]bool{}, network: map[string]bool{}}
-	for _, p := range append(append([]string{}, defaultTrustedParents...), extraTrusted...) {
-		c.trusted[strings.ToLower(p)] = true
+// defaultHostTrustedWriters are processes that legitimately write to host
+// persistence/config locations (package managers, init, cloud bootstrap, log
+// rotation, the container runtime). A write under one of these is suppressed by
+// the host persistence rules.
+var defaultHostTrustedWriters = []string{
+	"dpkg", "apt", "apt-get", "aptitude", "unattended-upgr", "unattended-upgrade",
+	"rpm", "yum", "dnf", "zypper", "apk", "snapd", "snap",
+	"systemd", "systemd-sysv-generator", "systemd-tmpfiles", "systemctl",
+	"cloud-init", "logrotate", "rsyslogd", "journald", "systemd-journald",
+	"dockerd", "containerd", "containerd-shim", "dkms", "kmod", "udevd", "systemd-udevd",
+}
+
+// classifier decides whether an event's ancestry is network-facing, an
+// interactive admin session, or a trusted supervisor.
+type classifier struct {
+	trusted        map[string]bool // container-scope trusted supervisors/schedulers
+	network        map[string]bool // network-facing service runtimes
+	hostTrusted    map[string]bool // additional host-scope trusted parents
+	interactive    map[string]bool // interactive admin session markers
+	trustedWriters map[string]bool // host trusted package/system writers
+	dockerClients  map[string]bool // comms allowed to open the docker socket on host
+}
+
+func newClassifier(cfg *config.Config) *classifier {
+	c := &classifier{
+		trusted:        map[string]bool{},
+		network:        map[string]bool{},
+		hostTrusted:    map[string]bool{},
+		interactive:    map[string]bool{},
+		trustedWriters: map[string]bool{},
+		dockerClients:  map[string]bool{},
 	}
-	for _, p := range append(append([]string{}, defaultNetworkParents...), extraNetwork...) {
-		c.network[strings.ToLower(p)] = true
+	var extraTrusted, extraNetwork, hostParents, hostWriters, dockerClients []string
+	if cfg != nil {
+		extraTrusted, extraNetwork = cfg.TrustedParents, cfg.NetworkParents
+		hostParents, hostWriters = cfg.HostTrustedParents, cfg.HostTrustedWriters
+		dockerClients = cfg.HostDockerClients
 	}
+	fill := func(m map[string]bool, lists ...[]string) {
+		for _, list := range lists {
+			for _, p := range list {
+				if s := strings.ToLower(strings.TrimSpace(p)); s != "" {
+					m[s] = true
+				}
+			}
+		}
+	}
+	fill(c.trusted, defaultTrustedParents, extraTrusted)
+	fill(c.network, defaultNetworkParents, extraNetwork)
+	fill(c.hostTrusted, hostParents)
+	fill(c.interactive, defaultInteractiveParents)
+	fill(c.trustedWriters, defaultHostTrustedWriters, hostWriters)
+	for k := range dockerSockClients {
+		c.dockerClients[k] = true
+	}
+	fill(c.dockerClients, dockerClients)
 	return c
 }
 
-// lineage classifies an ancestry chain. network wins over trusted: a shell whose
-// chain touches a network-facing service is suspicious even if cron is also
-// somewhere above it.
+// isDockerClient reports whether a comm is an expected Docker-socket client.
+func (c *classifier) isDockerClient(comm string) bool {
+	return c.dockerClients[strings.ToLower(comm)]
+}
+
+// lineage classifies an ancestry chain. Precedence, highest first: network (a
+// chain touching an internet-facing service is suspicious even if a scheduler is
+// also above it) → interactive (an admin session) → trusted (supervisor/
+// scheduler) → unknown.
 type lineage int
 
 const (
 	lineageUnknown lineage = iota
 	lineageTrusted
+	lineageInteractive
 	lineageNetwork
 )
 
-func (c *classifier) classify(ancestry []string) lineage {
-	trusted := false
+func (c *classifier) classify(ancestry []string, scope ruleScope) lineage {
+	trusted, interactive := false, false
 	for _, a := range ancestry {
 		la := strings.ToLower(a)
 		if c.network[la] {
 			return lineageNetwork
 		}
-		if c.trusted[la] {
+		if c.interactive[la] {
+			interactive = true
+		}
+		if c.trusted[la] || (scope == scopeHost && c.hostTrusted[la]) {
 			trusted = true
 		}
+	}
+	if interactive {
+		return lineageInteractive
 	}
 	if trusted {
 		return lineageTrusted
 	}
 	return lineageUnknown
+}
+
+// trustedWriter reports whether the ancestry chain is a legitimate host writer
+// (package manager, init, cloud bootstrap…) for the host persistence rules.
+func (c *classifier) trustedWriter(ancestry []string) bool {
+	for _, a := range ancestry {
+		if c.trustedWriters[strings.ToLower(a)] {
+			return true
+		}
+	}
+	return false
 }
 
 // networkParent returns the first network-facing ancestor (for alert context).

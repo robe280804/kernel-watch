@@ -40,6 +40,14 @@ var severityRank = map[Severity]int{
 	SeverityCritical: 4,
 }
 
+// Scope distinguishes a host-wide (whole-server) finding from a container one.
+// It is a first-class dimension carried through Event → Alert → ECS → Postgres →
+// API → suppressions.
+const (
+	ScopeContainer = "container"
+	ScopeHost      = "host"
+)
+
 // Alert represents a security event detected by KernelWatch.
 type Alert struct {
 	ID          string    `json:"id"`
@@ -47,10 +55,13 @@ type Alert struct {
 	ServerName  string    `json:"server_name"`
 	Timestamp   time.Time `json:"timestamp"`
 	Severity    Severity  `json:"severity"`
-	ContainerID string    `json:"container_id"`
-	ContainerName string  `json:"container_name"`
-	ImageName   string    `json:"image_name"`
-	Syscall     string    `json:"syscall,omitempty"`
+	// Scope is "host" or "container". Empty is treated as "container" for
+	// backward compatibility with pre-host-monitoring rows.
+	Scope         string `json:"scope,omitempty"`
+	ContainerID   string `json:"container_id,omitempty"`
+	ContainerName string `json:"container_name,omitempty"`
+	ImageName     string `json:"image_name,omitempty"`
+	Syscall       string `json:"syscall,omitempty"`
 	PID         uint32    `json:"pid"`
 	ProcessName string    `json:"process_name"`
 	Reason      string    `json:"reason"`
@@ -63,6 +74,72 @@ type Alert struct {
 	MITRETTP    string   `json:"mitre_ttp,omitempty"`
 	MITRETactic string   `json:"mitre_tactic,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+
+	// Kill-chain + correlation enrichment. KillChainPhase mirrors the MITRE
+	// tactic as a Lockheed-Martin-style stage name; RiskScore is populated only
+	// on correlated "attack chain" incidents. These are JSON-only (not persisted
+	// as dedicated columns — the correlation detail also lives in Details).
+	KillChainPhase string `json:"kill_chain_phase,omitempty"`
+	RiskScore      int    `json:"risk_score,omitempty"`
+}
+
+// IsIncident reports whether the alert is a correlated attack-chain incident
+// (as opposed to a single-event finding). Incidents bypass the per-container
+// severity filter and rate limiter — they are the highest-value signal and are
+// already throttled by the correlator's own cooldown.
+func (a *Alert) IsIncident() bool {
+	for _, t := range a.Tags {
+		if t == TagAttackChain {
+			return true
+		}
+	}
+	return false
+}
+
+// scopeOrDefault returns the alert's scope, defaulting to container so that
+// pre-host-monitoring alerts (and any rule that forgets to set it) keep their
+// original meaning.
+func (a *Alert) scopeOrDefault() string {
+	if a.Scope == "" {
+		return ScopeContainer
+	}
+	return a.Scope
+}
+
+// TagAttackChain marks a correlated attack-chain incident.
+const TagAttackChain = "attack-chain"
+
+// killChainOrder lists the MITRE ATT&CK tactics in kill-chain progression order.
+// The correlation engine counts how many DISTINCT stages a container has reached
+// and ECS enrichment exposes the phase; ordering also drives incident summaries.
+var killChainOrder = []string{
+	"Initial Access",
+	"Execution",
+	"Persistence",
+	"Privilege Escalation",
+	"Defense Evasion",
+	"Credential Access",
+	"Discovery",
+	"Lateral Movement",
+	"Collection",
+	"Command and Control",
+	"Exfiltration",
+	"Impact",
+}
+
+var killChainRank = func() map[string]int {
+	m := make(map[string]int, len(killChainOrder))
+	for i, t := range killChainOrder {
+		m[strings.ToLower(t)] = i + 1 // 1-based; 0 reserved for "unknown"
+	}
+	return m
+}()
+
+// KillChainRank returns the 1-based position of a MITRE tactic in the kill chain,
+// or 0 if the tactic is empty/unrecognized. Used to order and de-duplicate the
+// stages observed for a container.
+func KillChainRank(tactic string) int {
+	return killChainRank[strings.ToLower(strings.TrimSpace(tactic))]
 }
 
 // AlertSink is an optional persistence destination (e.g. TimescaleDB). It is
@@ -116,24 +193,32 @@ func New(cfg *config.Config, sink AlertSink) (*Alerter, error) {
 
 // Send dispatches an alert to all configured destinations.
 // It applies severity filtering and rate limiting before dispatching.
+//
+// Correlated incidents (IsIncident) bypass both the severity filter and the
+// rate limiter: they are the highest-value output and are already throttled by
+// the correlator's cooldown, so they must never be dropped because the container
+// is otherwise noisy.
 func (a *Alerter) Send(alert *Alert) {
-	// Severity filter
-	if severityRank[alert.Severity] < severityRank[Severity(a.cfg.AlertMinSeverity)] {
-		return
-	}
-
-	// Rate limiting per container
-	if a.isRateLimited(alert.ContainerID) {
-		slog.Debug("alert rate limited", "container", alert.ContainerName)
-		return
-	}
-
+	// Stamp identity first so even filtered alerts are fully formed for any
+	// downstream observer (e.g. the correlator inspects ServerName).
 	alert.ServerName = a.cfg.ServerName
 	if alert.Timestamp.IsZero() {
 		alert.Timestamp = time.Now()
 	}
 	if alert.ID == "" {
 		alert.ID = genID()
+	}
+
+	if !alert.IsIncident() {
+		// Severity filter
+		if severityRank[alert.Severity] < severityRank[Severity(a.cfg.AlertMinSeverity)] {
+			return
+		}
+		// Rate limiting per container
+		if a.isRateLimited(alert.ContainerID) {
+			slog.Debug("alert rate limited", "container", alert.ContainerName)
+			return
+		}
 	}
 
 	if a.cfg.LogEnabled {
@@ -171,8 +256,17 @@ func (a *Alerter) Close() {
 
 // ── Log destination ───────────────────────────────────────────────────────────
 
+// payload marshals an alert in the configured wire format: native enriched JSON
+// (default) or ECS (Elastic Common Schema) for direct SIEM ingestion.
+func (a *Alerter) payload(alert *Alert) ([]byte, error) {
+	if strings.EqualFold(a.cfg.AlertFormat, "ecs") {
+		return json.Marshal(alert.ECS())
+	}
+	return json.Marshal(alert)
+}
+
 func (a *Alerter) writeLog(alert *Alert) {
-	data, err := json.Marshal(alert)
+	data, err := a.payload(alert)
 	if err != nil {
 		slog.Error("marshal alert", "err", err)
 		return
@@ -234,7 +328,7 @@ func (a *Alerter) rotateIfNeeded() {
 // ── Webhook destination ───────────────────────────────────────────────────────
 
 func (a *Alerter) sendWebhook(alert *Alert) {
-	data, err := json.Marshal(alert)
+	data, err := a.payload(alert)
 	if err != nil {
 		slog.Error("webhook marshal", "err", err)
 		return
@@ -323,6 +417,23 @@ type slackText struct {
 	Text string `json:"text"`
 }
 
+// slackEscaper neutralizes the characters that let attacker-controlled text
+// break out of, or inject into, Slack mrkdwn. Order matters: escape & first.
+var slackEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"<", "&lt;",
+	">", "&gt;",
+	"`", "ʻ", // backtick → modifier letter turned comma: visually close, inert in mrkdwn
+	"\n", " ",
+	"\r", " ",
+	"\t", " ",
+)
+
+// escapeSlack makes a field safe to interpolate into a Slack mrkdwn message.
+func escapeSlack(s string) string {
+	return slackEscaper.Replace(s)
+}
+
 func (a *Alerter) sendSlack(alert *Alert) {
 	emoji := map[Severity]string{
 		SeverityLow:      ":information_source:",
@@ -331,25 +442,30 @@ func (a *Alerter) sendSlack(alert *Alert) {
 		SeverityCritical: ":skull:",
 	}[alert.Severity]
 
+	// Every interpolated value below the severity tag can contain
+	// attacker-controlled data (command line, container/image name, ancestry are
+	// read from /proc), so each is escaped to prevent Slack-markdown injection —
+	// e.g. a backtick in a command line breaking out of the code span, or
+	// </>/& confusing Slack's mrkdwn parser, or a newline forging a quote line.
 	text := fmt.Sprintf("%s *[%s]* %s\n>*Server:* %s | *Container:* `%s` (`%s`)\n>*Process:* `%s` (PID %d)",
 		emoji,
 		strings.ToUpper(string(alert.Severity)),
-		alert.Reason,
-		alert.ServerName,
-		alert.ContainerName,
-		alert.ImageName,
-		alert.ProcessName,
+		escapeSlack(alert.Reason),
+		escapeSlack(alert.ServerName),
+		escapeSlack(alert.ContainerName),
+		escapeSlack(alert.ImageName),
+		escapeSlack(alert.ProcessName),
 		alert.PID,
 	)
 
 	if alert.ParentName != "" {
-		text += fmt.Sprintf("\n>*Parent:* `%s`", alert.ParentName)
+		text += fmt.Sprintf("\n>*Parent:* `%s`", escapeSlack(alert.ParentName))
 	}
 	if alert.CmdLine != "" {
-		text += fmt.Sprintf("\n>*Command:* `%s`", alert.CmdLine)
+		text += fmt.Sprintf("\n>*Command:* `%s`", escapeSlack(alert.CmdLine))
 	}
 	if alert.MITRETTP != "" {
-		text += fmt.Sprintf("\n>*MITRE:* %s — %s", alert.MITRETTP, alert.MITRETactic)
+		text += fmt.Sprintf("\n>*MITRE:* %s — %s", escapeSlack(alert.MITRETTP), escapeSlack(alert.MITRETactic))
 	}
 
 	payload := slackPayload{

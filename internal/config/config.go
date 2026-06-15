@@ -17,11 +17,29 @@ type Config struct {
 	// rules are evaluated and logged but webhook/Slack are never called.
 	Mode string
 
+	// Detection ruleset (YAML). Empty = use only the embedded default ruleset.
+	// RulesFile is a single overlay file; RulesDir is a directory of *.yaml
+	// overlays applied in lexical order. Both merge on top of the defaults
+	// (override / append semantics).
+	RulesFile string
+	RulesDir  string
+
 	// Process-lineage detection tuning
 	AncestryDepth       int      // ancestors to resolve per execve (default 5)
 	TrustedParents      []string // extra parent comms treated as benign supervisors/schedulers
 	NetworkParents      []string // extra parent comms treated as network-facing (attack surface)
 	DetectionExceptions []string // suppress matches by image/name/ancestry/argv substring
+
+	// Host (whole-server) monitoring. Opt-in: when false (default) every host
+	// event is dropped at the collector, so behavior is byte-for-byte identical to
+	// the container-only build. When true, host-scope events (PIDs not in a
+	// container) are collected, enriched, and evaluated by the host ruleset.
+	MonitorHost        bool
+	HostOpenWatchExtra []string // extra path prefixes to watch on host openat (allowlist)
+	HostExecExclude    []string // comm names to exclude on host execve (fleet agents)
+	HostTrustedWriters []string // extra trusted writers for host persistence rules
+	HostTrustedParents []string // extra trusted parent comms for host-scope classification
+	HostDockerClients  []string // extra comm names allowed to open docker.sock on host
 
 	// Container filtering
 	ContainerWhitelist []string // empty = monitor all
@@ -31,6 +49,31 @@ type Config struct {
 	AlertMinSeverity string
 	AlertMaxRate     int
 	AlertRateWindow  int // seconds
+
+	// Alert output format: "native" (enriched KernelWatch JSON, default) or
+	// "ecs" (Elastic Common Schema) for direct SIEM ingestion. Applies to the log
+	// file and webhook bodies; Slack always uses the human-readable format.
+	AlertFormat string
+
+	// Attack-chain correlation: when several findings from the same container's
+	// process tree span multiple MITRE kill-chain stages inside a window, emit one
+	// consolidated, escalated "attack chain" incident instead of disconnected
+	// alerts. This both raises true-positive confidence and cuts alert fatigue.
+	CorrelationEnabled   bool
+	CorrelationWindow    int // sliding correlation window (seconds)
+	CorrelationMinStages int // distinct kill-chain stages required to raise an incident
+	CorrelationMinScore  int // OR: accumulated risk score required to raise an incident
+	CorrelationCooldown  int // minimum seconds between incidents for the same container
+	// Host-bucket overrides: fleets generally want a wider chain on the noisier
+	// host scope before raising an incident. 0 = inherit the container thresholds.
+	CorrelationHostMinStages int
+	CorrelationHostMinScore  int
+
+	// SSH brute-force auth-log tailer (eBPF cannot see auth outcomes). Opt-in.
+	AuthLogEnabled    bool
+	AuthLogPath       string
+	SSHBruteThreshold int // failed attempts per source IP within the window
+	SSHBruteWindow    int // sliding window (seconds)
 
 	// Alert destinations
 	LogEnabled    bool
@@ -45,8 +88,10 @@ type Config struct {
 	SlackChannel      string
 
 	// API
-	APIPort  int
-	APIToken string
+	APIEnabled  bool   // expose the REST API (off by default — opt-in network surface)
+	APIBindAddr string // interface to bind (default 127.0.0.1 — never 0.0.0.0 unless deliberate)
+	APIPort     int
+	APIToken    string
 
 	// eBPF
 	EBPFRingbufSize int
@@ -76,6 +121,12 @@ func Load() (*Config, error) {
 		AlertMinSeverity: envOr("KW_ALERT_MIN_SEVERITY", "medium"),
 		AlertMaxRate:    10,
 		AlertRateWindow: 60,
+		AlertFormat:     strings.ToLower(envOr("KW_ALERT_FORMAT", "native")),
+		CorrelationEnabled:   envBool("KW_CORRELATION_ENABLED", true),
+		CorrelationWindow:    300,
+		CorrelationMinStages: 3,
+		CorrelationMinScore:  120,
+		CorrelationCooldown:  300,
 		LogEnabled:      true,
 		LogPath:         envOr("KW_LOG_PATH", "/var/log/kernelwatch/alerts.json"),
 		LogMaxMB:        50,
@@ -102,12 +153,56 @@ func Load() (*Config, error) {
 	cfg.NetworkParents = splitCSV(os.Getenv("KW_NETWORK_PARENTS"))
 	cfg.DetectionExceptions = splitCSV(os.Getenv("KW_DETECTION_EXCEPTIONS"))
 
+	// Detection ruleset overlays (YAML).
+	cfg.RulesFile = os.Getenv("KW_RULES_FILE")
+	cfg.RulesDir = os.Getenv("KW_RULES_DIR")
+
+	// Host monitoring (opt-in; default off = container-only behavior).
+	cfg.MonitorHost = envBool("KW_MONITOR_HOST", false)
+	cfg.HostOpenWatchExtra = splitCSV(os.Getenv("KW_HOST_OPEN_WATCH_EXTRA"))
+	cfg.HostExecExclude = splitCSV(os.Getenv("KW_HOST_EXEC_EXCLUDE"))
+	cfg.HostTrustedWriters = splitCSV(os.Getenv("KW_HOST_TRUSTED_WRITERS"))
+	cfg.HostTrustedParents = splitCSV(os.Getenv("KW_HOST_TRUSTED_PARENTS"))
+	cfg.HostDockerClients = splitCSV(os.Getenv("KW_HOST_DOCKER_CLIENTS"))
+
 	// Alert thresholds
 	if v, err := envInt("KW_ALERT_MAX_RATE", 10); err == nil {
 		cfg.AlertMaxRate = v
 	}
 	if v, err := envInt("KW_ALERT_RATE_WINDOW", 60); err == nil {
 		cfg.AlertRateWindow = v
+	}
+
+	// Correlation tuning
+	if v, err := envInt("KW_CORRELATION_WINDOW", 300); err == nil && v > 0 {
+		cfg.CorrelationWindow = v
+	}
+	if v, err := envInt("KW_CORRELATION_MIN_STAGES", 3); err == nil && v > 0 {
+		cfg.CorrelationMinStages = v
+	}
+	if v, err := envInt("KW_CORRELATION_MIN_SCORE", 120); err == nil && v > 0 {
+		cfg.CorrelationMinScore = v
+	}
+	if v, err := envInt("KW_CORRELATION_COOLDOWN", 300); err == nil && v >= 0 {
+		cfg.CorrelationCooldown = v
+	}
+	if v, err := envInt("KW_CORRELATION_HOST_MIN_STAGES", 0); err == nil && v > 0 {
+		cfg.CorrelationHostMinStages = v
+	}
+	if v, err := envInt("KW_CORRELATION_HOST_MIN_SCORE", 0); err == nil && v > 0 {
+		cfg.CorrelationHostMinScore = v
+	}
+
+	// SSH brute-force auth-log tailer.
+	cfg.AuthLogEnabled = envBool("KW_AUTHLOG_ENABLED", false)
+	cfg.AuthLogPath = envOr("KW_AUTHLOG_PATH", "/var/log/auth.log")
+	cfg.SSHBruteThreshold = 5
+	cfg.SSHBruteWindow = 60
+	if v, err := envInt("KW_SSH_BRUTE_THRESHOLD", 5); err == nil && v > 0 {
+		cfg.SSHBruteThreshold = v
+	}
+	if v, err := envInt("KW_SSH_BRUTE_WINDOW", 60); err == nil && v > 0 {
+		cfg.SSHBruteWindow = v
 	}
 
 	// Alert destinations
@@ -126,6 +221,8 @@ func Load() (*Config, error) {
 	cfg.SlackChannel = envOr("KW_SLACK_CHANNEL", "#security-alerts")
 
 	// API
+	cfg.APIEnabled = envBool("KW_API_ENABLED", false)
+	cfg.APIBindAddr = envOr("KW_API_BIND_ADDR", "127.0.0.1")
 	if v, err := envInt("KW_API_PORT", 8080); err == nil {
 		cfg.APIPort = v
 	}
@@ -162,6 +259,9 @@ func (c *Config) validate() error {
 	if c.Mode != "alert" && c.Mode != "monitor" {
 		return fmt.Errorf("KW_MODE must be one of: alert, monitor (got %q)", c.Mode)
 	}
+	if c.AlertFormat != "native" && c.AlertFormat != "ecs" {
+		return fmt.Errorf("KW_ALERT_FORMAT must be one of: native, ecs (got %q)", c.AlertFormat)
+	}
 	if c.DBEnabled {
 		if c.DBPassword == "" {
 			return fmt.Errorf("KW_DB_PASSWORD is required when KW_DB_ENABLED=true (it must match the database's password)")
@@ -172,6 +272,28 @@ func (c *Config) validate() error {
 	}
 	if c.APIPort < 1 || c.APIPort > 65535 {
 		return fmt.Errorf("KW_API_PORT must be between 1 and 65535 (got %d)", c.APIPort)
+	}
+	if c.APIEnabled {
+		// An exposed, unauthenticated control surface is never acceptable.
+		if c.APIToken == "" {
+			return fmt.Errorf("KW_API_TOKEN is required when KW_API_ENABLED=true (set a strong random token)")
+		}
+		if strings.Contains(strings.ToLower(c.APIToken), "changeme") {
+			return fmt.Errorf("KW_API_TOKEN must not contain the default placeholder — set a strong random token")
+		}
+		if len(c.APIToken) < 16 {
+			return fmt.Errorf("KW_API_TOKEN is too short (%d chars); use at least 16 random characters", len(c.APIToken))
+		}
+	}
+	if c.RulesFile != "" {
+		if fi, err := os.Stat(c.RulesFile); err != nil || fi.IsDir() {
+			return fmt.Errorf("KW_RULES_FILE %q is not a readable file", c.RulesFile)
+		}
+	}
+	if c.RulesDir != "" {
+		if fi, err := os.Stat(c.RulesDir); err != nil || !fi.IsDir() {
+			return fmt.Errorf("KW_RULES_DIR %q is not a directory", c.RulesDir)
+		}
 	}
 	if c.WebhookEnabled && c.WebhookURL == "" {
 		return fmt.Errorf("KW_WEBHOOK_URL is required when KW_WEBHOOK_ENABLED=true")

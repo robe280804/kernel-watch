@@ -33,7 +33,8 @@ const (
 // row is the flattened representation inserted into the alerts table.
 type row struct {
 	Timestamp                                                          time.Time
-	ServerName, RuleID, Severity, ContainerID, ContainerName, ImageName string
+	ServerName, RuleID, Severity, Scope                                string
+	ContainerID, ContainerName, ImageName                             string
 	Syscall                                                            string
 	PID                                                                int64
 	ProcessName, ParentName                                            string
@@ -48,11 +49,16 @@ func toRow(a *alerter.Alert) row {
 	if len(a.Details) > 0 {
 		details, _ = json.Marshal(a.Details)
 	}
+	scope := a.Scope
+	if scope == "" {
+		scope = alerter.ScopeContainer // backfill default for pre-host-monitoring alerts
+	}
 	return row{
 		Timestamp:     a.Timestamp,
 		ServerName:    a.ServerName,
 		RuleID:        a.RuleID,
 		Severity:      string(a.Severity),
+		Scope:         scope,
 		ContainerID:   a.ContainerID,
 		ContainerName: a.ContainerName,
 		ImageName:     a.ImageName,
@@ -81,6 +87,7 @@ type inserter interface {
 // Store is an async, resilient alert sink. It satisfies alerter.AlertSink.
 type Store struct {
 	in      inserter
+	q       querier // read path (alert queries, stats, suppressions); nil in unit tests
 	ch      chan row
 	done    chan struct{}
 	wg      sync.WaitGroup
@@ -90,7 +97,10 @@ type Store struct {
 // New builds a TimescaleDB-backed Store from config and starts its worker. It
 // never blocks on or fails because of a down database.
 func New(cfg *config.Config) *Store {
-	return newStore(newPgInserter(cfg.DSN(), cfg.DBRetentionDays))
+	pg := newPgInserter(cfg.DSN(), cfg.DBRetentionDays)
+	s := newStore(pg)
+	s.q = pg // same connection pool serves the read path (API queries)
+	return s
 }
 
 func newStore(in inserter) *Store {
@@ -262,10 +272,10 @@ func (p *pgInserter) ensureSchema(ctx context.Context) error {
 }
 
 const insertSQL = `INSERT INTO alerts
-(timestamp, server_name, rule_id, severity, container_id, container_name, image_name,
+(timestamp, server_name, rule_id, severity, scope, container_id, container_name, image_name,
  syscall, pid, process_name, parent_name, ancestry, cmdline, reason, mitre_ttp,
  mitre_tactic, tags, details)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`
 
 func (p *pgInserter) insertBatch(ctx context.Context, rows []row) error {
 	pool, err := p.getPool(ctx)
@@ -275,7 +285,7 @@ func (p *pgInserter) insertBatch(ctx context.Context, rows []row) error {
 	batch := &pgx.Batch{}
 	for _, r := range rows {
 		batch.Queue(insertSQL,
-			r.Timestamp, r.ServerName, r.RuleID, r.Severity, r.ContainerID, r.ContainerName,
+			r.Timestamp, r.ServerName, r.RuleID, r.Severity, r.Scope, r.ContainerID, r.ContainerName,
 			r.ImageName, r.Syscall, r.PID, r.ProcessName, r.ParentName, r.Ancestry, r.CmdLine,
 			r.Reason, r.MitreTTP, r.MitreTactic, r.Tags, r.Details)
 	}
@@ -308,6 +318,7 @@ func schemaStatements(retentionDays int) []string {
 			server_name    text,
 			rule_id        text,
 			severity       text,
+			scope          text        NOT NULL DEFAULT 'container',
 			container_id   text,
 			container_name text,
 			image_name     text,
@@ -324,10 +335,30 @@ func schemaStatements(retentionDays int) []string {
 			details        jsonb,
 			PRIMARY KEY (id, timestamp)
 		)`,
+		// Upgrade path for alerts tables created before host monitoring existed.
+		`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'container'`,
 		`SELECT create_hypertable('alerts', 'timestamp', if_not_exists => TRUE)`,
 		`CREATE INDEX IF NOT EXISTS alerts_container_ts ON alerts (container_id, timestamp DESC)`,
 		`CREATE INDEX IF NOT EXISTS alerts_severity_ts ON alerts (severity, timestamp DESC)`,
 		`CREATE INDEX IF NOT EXISTS alerts_rule_ts ON alerts (rule_id, timestamp DESC)`,
+		`CREATE INDEX IF NOT EXISTS alerts_scope_ts ON alerts (scope, timestamp DESC)`,
+		// Operator-defined false-positive suppression rules, managed via the API.
+		// Mirrored by migrations/0002_suppressions.sql for fresh init runs.
+		`CREATE TABLE IF NOT EXISTS suppressions (
+			id             uuid        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+			rule_id        text        NOT NULL DEFAULT '',
+			scope          text        NOT NULL DEFAULT '',
+			hostname       text        NOT NULL DEFAULT '',
+			container_name text        NOT NULL DEFAULT '',
+			process_name   text        NOT NULL DEFAULT '',
+			substr         text        NOT NULL DEFAULT '',
+			reason         text        NOT NULL DEFAULT '',
+			created_by     text        NOT NULL DEFAULT '',
+			created_at     timestamptz NOT NULL DEFAULT now()
+		)`,
+		// Upgrade path for suppressions tables created before host monitoring.
+		`ALTER TABLE suppressions ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT ''`,
+		`ALTER TABLE suppressions ADD COLUMN IF NOT EXISTS hostname text NOT NULL DEFAULT ''`,
 	}
 	if retentionDays > 0 {
 		stmts = append(stmts, fmt.Sprintf(

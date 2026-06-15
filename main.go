@@ -17,10 +17,14 @@ import (
 	"time"
 
 	"kernelwatch/internal/alerter"
+	"kernelwatch/internal/api"
 	"kernelwatch/internal/collector"
 	"kernelwatch/internal/config"
 	"kernelwatch/internal/container"
+	"kernelwatch/internal/correlator"
 	"kernelwatch/internal/detector"
+	"kernelwatch/internal/logtail"
+	"kernelwatch/internal/ruleengine"
 	"kernelwatch/internal/storage"
 )
 
@@ -33,9 +37,10 @@ const (
 )
 
 func main() {
-	var showVersion, healthCheck bool
+	var showVersion, healthCheck, validateRules bool
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.BoolVar(&healthCheck, "health", false, "check the heartbeat file and exit (0=healthy, 1=unhealthy)")
+	flag.BoolVar(&validateRules, "validate", false, "validate the ruleset (embedded + KW_RULES_FILE/KW_RULES_DIR) and exit (0=ok, 1=invalid)")
 	flag.Parse()
 
 	if showVersion {
@@ -44,6 +49,9 @@ func main() {
 	}
 	if healthCheck {
 		os.Exit(runHealthCheck())
+	}
+	if validateRules {
+		os.Exit(runValidateRules())
 	}
 
 	// ── Structured logging ────────────────────────────────────────────────────
@@ -66,15 +74,29 @@ func main() {
 		"webhook", cfg.WebhookEnabled,
 		"slack", cfg.SlackEnabled,
 		"db_enabled", cfg.DBEnabled,
+		"monitor_host", cfg.MonitorHost,
 	)
+
+	// Fail fast on a broken operator ruleset at startup (deliberate divergence
+	// from the runtime hot-reload path, which keeps the last-good ruleset).
+	if cfg.RulesFile != "" || cfg.RulesDir != "" {
+		if err := ruleengine.Validate(cfg.RulesFile, cfg.RulesDir); err != nil {
+			slog.Error("rule engine validation failed", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("custom ruleset loaded", "file", cfg.RulesFile, "dir", cfg.RulesDir)
+	}
 
 	// ── Build components ──────────────────────────────────────────────────────
 	mapper := container.New(5 * time.Minute)
 
-	// Optional alert persistence (best-effort; never blocks monitoring).
+	// Optional alert persistence (best-effort; never blocks monitoring). The
+	// concrete store is kept (not just the sink interface) so the REST API can
+	// query the alert history and manage suppressions through it.
 	var sink alerter.AlertSink
+	var store *storage.Store
 	if cfg.DBEnabled {
-		store := storage.New(cfg)
+		store = storage.New(cfg)
 		defer store.Close()
 		sink = store
 	}
@@ -88,6 +110,26 @@ func main() {
 
 	detect := detector.New(cfg)
 	coll := collector.New(cfg, mapper)
+
+	// Attack-chain correlation: consolidates a container's findings into one
+	// escalated incident when they span multiple kill-chain stages. nil when
+	// disabled, in which case Observe is simply never called.
+	var correlate *correlator.Correlator
+	if cfg.CorrelationEnabled {
+		correlate = correlator.New(correlator.Config{
+			Window:        time.Duration(cfg.CorrelationWindow) * time.Second,
+			MinStages:     cfg.CorrelationMinStages,
+			MinScore:      cfg.CorrelationMinScore,
+			Cooldown:      time.Duration(cfg.CorrelationCooldown) * time.Second,
+			HostMinStages: cfg.CorrelationHostMinStages,
+			HostMinScore:  cfg.CorrelationHostMinScore,
+		})
+		slog.Info("attack-chain correlation enabled",
+			"window_s", cfg.CorrelationWindow,
+			"min_stages", cfg.CorrelationMinStages,
+			"min_score", cfg.CorrelationMinScore,
+		)
+	}
 
 	// ── Start eBPF collector ──────────────────────────────────────────────────
 	events, err := coll.Start()
@@ -109,6 +151,64 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// ── REST API + live suppression reload ─────────────────────────────────────
+	// Operator-defined false-positive suppressions live in the database and are
+	// reloaded into the detector both on a short interval (covers changes from
+	// other instances) and immediately after an API mutation (onChange).
+	if store != nil {
+		reloadSuppressions(ctx, store, detect)        // best-effort initial load
+		go suppressionReloader(ctx, store, detect)    // periodic refresh
+	}
+
+	// Hot-reload the YAML ruleset (operator file/dir) on a short interval, so rule
+	// changes take effect without a restart. Only started when a custom ruleset is
+	// configured (the embedded default is immutable). A failed reload keeps the
+	// previous ruleset — the monitor never disarms.
+	if cfg.RulesFile != "" || cfg.RulesDir != "" {
+		go rulesReloader(ctx, cfg, detect)
+	}
+	if cfg.APIEnabled {
+		var backend api.Backend
+		if store != nil {
+			backend = store
+		}
+		apiSrv := api.New(cfg, backend, version, func() {
+			if store != nil {
+				reloadSuppressions(ctx, store, detect)
+			}
+		})
+		if err := apiSrv.Start(); err != nil {
+			slog.Error("api start", "err", err)
+			os.Exit(1)
+		}
+		defer func() {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = apiSrv.Stop(sctx)
+		}()
+	}
+
+	// ── SSH brute-force auth-log tailer ────────────────────────────────────────
+	// eBPF cannot see authentication outcomes, so credential-stuffing detection
+	// comes from the host auth log. Synthesized alerts flow into the same Send
+	// path (and thus correlation, persistence, and SIEM output) as eBPF findings.
+	if cfg.AuthLogEnabled {
+		tailer := logtail.New(logtail.Config{
+			Path:       cfg.AuthLogPath,
+			Threshold:  cfg.SSHBruteThreshold,
+			Window:     time.Duration(cfg.SSHBruteWindow) * time.Second,
+			ServerName: cfg.ServerName,
+		}, func(a *alerter.Alert) {
+			alert.Send(a)
+			if correlate != nil {
+				if inc := correlate.Observe(a); inc != nil {
+					alert.Send(inc)
+				}
+			}
+		})
+		go tailer.Run(ctx)
+	}
+
 	// ── Main event loop ───────────────────────────────────────────────────────
 	var processed, alerted uint64
 
@@ -129,6 +229,15 @@ func main() {
 			for _, a := range detect.Check(event) {
 				alerted++
 				alert.Send(a)
+				// Feed every finding to the correlator (before any severity
+				// filtering) so low-signal recon still counts toward a chain. A
+				// returned incident is dispatched as its own escalated alert.
+				if correlate != nil {
+					if inc := correlate.Observe(a); inc != nil {
+						alerted++
+						alert.Send(inc)
+					}
+				}
 			}
 
 		case <-hb.C:
@@ -176,6 +285,79 @@ func writeHeartbeat(path string, s collector.Stats, processed, alerted uint64) {
 		return
 	}
 	_ = os.Rename(tmp, path)
+}
+
+// reloadSuppressions loads the active suppression set from the store into the
+// detector. Best-effort: a transient DB error (e.g. before the schema exists)
+// just leaves the previous set in place until the next reload.
+func reloadSuppressions(ctx context.Context, store *storage.Store, detect *detector.Detector) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	set, err := store.ListSuppressions(cctx)
+	if err != nil {
+		slog.Debug("suppression reload skipped", "err", err)
+		return
+	}
+	detect.SetSuppressions(set)
+	slog.Debug("suppressions reloaded", "count", len(set))
+}
+
+// suppressionReloader periodically refreshes the detector's suppression set so
+// changes made via the API (including from another instance) take effect without
+// a restart. Stops when ctx is cancelled.
+func suppressionReloader(ctx context.Context, store *storage.Store, detect *detector.Detector) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			reloadSuppressions(ctx, store, detect)
+		}
+	}
+}
+
+// runValidateRules is the `--validate` subcommand: compiles the embedded ruleset
+// plus any KW_RULES_FILE/KW_RULES_DIR overlays and reports the result. Needs
+// neither root nor eBPF, so CI and operators can lint a rules file safely.
+func runValidateRules() int {
+	file := os.Getenv("KW_RULES_FILE")
+	dir := os.Getenv("KW_RULES_DIR")
+	if err := ruleengine.Validate(file, dir); err != nil {
+		fmt.Fprintln(os.Stderr, "ruleset invalid:", err)
+		return 1
+	}
+	fmt.Println("ruleset OK")
+	return 0
+}
+
+// reloadRules recompiles the ruleset (embedded + operator overlays) and swaps it
+// into the detector. Best-effort: a transient parse/compile error leaves the
+// previous ruleset in place so the monitor keeps running.
+func reloadRules(cfg *config.Config, detect *detector.Detector) {
+	eng, err := ruleengine.Load(cfg.RulesFile, cfg.RulesDir)
+	if err != nil {
+		slog.Warn("ruleset reload skipped (keeping previous)", "err", err)
+		return
+	}
+	detect.SetRuleset(eng)
+	slog.Debug("ruleset reloaded")
+}
+
+// rulesReloader periodically reloads the ruleset so operator edits take effect
+// without a restart. Stops when ctx is cancelled.
+func rulesReloader(ctx context.Context, cfg *config.Config, detect *detector.Detector) {
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			reloadRules(cfg, detect)
+		}
+	}
 }
 
 // runHealthCheck is the `-health` subcommand: exits 0 if the heartbeat file is
