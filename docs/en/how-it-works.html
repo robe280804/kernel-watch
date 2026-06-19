@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KernelWatch — How it works</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1d2638; --ink:#e8edf6; --muted:#9aa7bd;
+    --line:#2a3550; --brand:#4f8cff; --brand2:#7c5cff;
+    --low:#5b8def; --medium:#e0a33e; --high:#e8743b; --critical:#e0455e; --ok:#3ec98a;
+    --radius:14px; --shadow:0 8px 30px rgba(0,0,0,.35);
+    font-synthesis:none;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:960px; margin:0 auto; padding:0 20px 80px}
+  a{color:var(--brand)}
+  code{background:#0b0f18; border:1px solid var(--line); padding:.12em .45em; border-radius:6px; font-size:.9em; color:#cdd9f0}
+
+  /* hero */
+  header.hero{
+    background:radial-gradient(1200px 400px at 70% -10%, rgba(124,92,255,.35), transparent 60%),
+               radial-gradient(900px 400px at 10% 0%, rgba(79,140,255,.30), transparent 55%),
+               var(--panel);
+    border-bottom:1px solid var(--line);
+    padding:64px 20px 56px; text-align:center;
+  }
+  .hero .lang{position:absolute; top:18px; right:24px; font-size:.85rem; color:var(--muted)}
+  .hero .lang a{margin-left:10px}
+  .badge-top{display:inline-block; font-size:.78rem; letter-spacing:.12em; text-transform:uppercase;
+    color:#bcd0ff; background:rgba(79,140,255,.15); border:1px solid rgba(79,140,255,.4);
+    padding:6px 14px; border-radius:999px; margin-bottom:18px}
+  .hero h1{font-size:2.6rem; margin:0 0 12px; letter-spacing:-.02em}
+  .hero p{font-size:1.2rem; color:var(--muted); max-width:640px; margin:0 auto}
+
+  section{margin-top:48px}
+  h2{font-size:1.5rem; margin:0 0 6px; letter-spacing:-.01em}
+  h2 .em{color:var(--brand)}
+  .lead{color:var(--muted); margin:0 0 22px}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:22px 24px; box-shadow:var(--shadow)}
+  .grid{display:grid; gap:16px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:720px){.g2,.g3{grid-template-columns:1fr}}
+
+  /* the "one sentence" panel */
+  .oneliner{font-size:1.25rem; line-height:1.7}
+  .oneliner b{color:#fff}
+
+  /* flow steps */
+  .flow{counter-reset:step; display:grid; gap:14px}
+  .step{display:grid; grid-template-columns:48px 1fr; gap:16px; align-items:start;
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px}
+  .step .num{counter-increment:step; width:48px; height:48px; border-radius:50%;
+    background:linear-gradient(135deg,var(--brand),var(--brand2)); color:#fff; font-weight:700; font-size:1.2rem;
+    display:flex; align-items:center; justify-content:center}
+  .step .num::before{content:counter(step)}
+  .step h3{margin:2px 0 4px; font-size:1.05rem}
+  .step p{margin:0; color:var(--muted)}
+  .arrow{text-align:center; color:var(--line); font-size:1.4rem; line-height:.4}
+
+  /* context comparison */
+  .compare{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  @media(max-width:720px){.compare{grid-template-columns:1fr}}
+  .verdict{border-radius:var(--radius); padding:20px 22px; border:1px solid var(--line)}
+  .verdict.good{background:rgba(62,201,138,.08); border-color:rgba(62,201,138,.4)}
+  .verdict.bad{background:rgba(224,69,94,.08); border-color:rgba(224,69,94,.45)}
+  .verdict .tag{font-weight:700; font-size:.8rem; letter-spacing:.08em; text-transform:uppercase}
+  .verdict.good .tag{color:var(--ok)}
+  .verdict.bad .tag{color:var(--critical)}
+  .verdict .cmd{font-family:ui-monospace,Menlo,Consolas,monospace; background:#0b0f18; border:1px solid var(--line);
+    border-radius:8px; padding:10px 12px; margin:12px 0; font-size:.9rem; color:#cdd9f0; overflow-x:auto}
+  .chain{font-size:.86rem; color:var(--muted); margin-top:8px}
+  .chain b{color:var(--ink)}
+
+  /* severity legend */
+  .sev{display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:var(--panel2)}
+  .dot{width:14px; height:14px; border-radius:50%; flex:0 0 auto}
+  .dot.low{background:var(--low)} .dot.medium{background:var(--medium)}
+  .dot.high{background:var(--high)} .dot.critical{background:var(--critical)}
+  .sev .name{font-weight:700} .sev .desc{color:var(--muted); font-size:.92rem}
+
+  /* detection cards */
+  .det{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px 20px}
+  .det .ico{font-size:1.6rem}
+  .det h3{margin:8px 0 4px; font-size:1.05rem}
+  .det p{margin:0; color:var(--muted); font-size:.92rem}
+  .det .ttp{display:inline-block; margin-top:10px; font-size:.74rem; color:#bcd0ff;
+    background:rgba(79,140,255,.12); border:1px solid rgba(79,140,255,.3); padding:3px 8px; border-radius:6px}
+
+  /* destinations */
+  .dest{display:flex; gap:14px; align-items:center; padding:14px 16px; background:var(--panel2); border:1px solid var(--line); border-radius:10px}
+  .dest .ico{font-size:1.5rem}
+  .dest b{display:block} .dest span{color:var(--muted); font-size:.9rem}
+
+  .note{background:rgba(224,163,62,.08); border:1px solid rgba(224,163,62,.4); border-radius:10px; padding:14px 16px; color:#f0dcb4; font-size:.94rem}
+  footer{margin-top:60px; padding-top:24px; border-top:1px solid var(--line); color:var(--muted); font-size:.88rem; text-align:center}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="lang">🌐 <a href="how-it-works.html">EN</a> · <a href="../it/come-funziona.html">IT</a></div>
+  <div class="badge-top">🛡️ Security monitoring made visible</div>
+  <h1>KernelWatch</h1>
+  <p>The silent guardian that watches your Docker containers from inside the Linux kernel — and warns you the moment one of them starts behaving like it has been broken into.</p>
+</header>
+
+<div class="wrap">
+
+  <!-- ONE SENTENCE -->
+  <section>
+    <div class="card oneliner">
+      KernelWatch watches what every program <b>actually does</b> on your server — not what it
+      <i>claims</i> to do. When a container suddenly opens a shell, reads a password file, scans the
+      network, or installs new tools, KernelWatch notices in <b>real time</b> and raises an alert with a
+      clear severity and a plain-language reason.
+    </div>
+  </section>
+
+  <!-- HOW IT WATCHES -->
+  <section>
+    <h2>👀 Where it watches from</h2>
+    <p class="lead">The trick that makes it powerful — and impossible to hide from.</p>
+    <div class="grid g3">
+      <div class="det">
+        <div class="ico">🧩</div>
+        <h3>Nothing inside your containers</h3>
+        <p>You don't install anything in your apps. A single guard runs on the host. Your containers stay untouched.</p>
+      </div>
+      <div class="det">
+        <div class="ico">🔬</div>
+        <h3>It listens at the kernel</h3>
+        <p>Every action a program takes (open a file, run a command, connect somewhere) passes through the Linux kernel. KernelWatch listens exactly there.</p>
+      </div>
+      <div class="det">
+        <div class="ico">🥷</div>
+        <h3>An attacker can't turn it off</h3>
+        <p>Even if someone takes over a container, they can't see or disable a monitor that lives below them, in the kernel.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- THE JOURNEY -->
+  <section>
+    <h2>🚦 The journey of a single event</h2>
+    <p class="lead">From "a program did something" to "you get an alert" — in milliseconds.</p>
+    <div class="flow">
+      <div class="step"><div class="num"></div><div><h3>Something happens</h3><p>A program in a container runs a command, opens a file, or opens a network connection.</p></div></div>
+      <div class="arrow">▼</div>
+      <div class="step"><div class="num"></div><div><h3>The kernel reports it</h3><p>KernelWatch is notified instantly, with no delay and no missed events.</p></div></div>
+      <div class="arrow">▼</div>
+      <div class="step"><div class="num"></div><div><h3>Which container was it?</h3><p>It figures out which container the action came from. Actions on the host itself are ignored unless you switch on host monitoring.</p></div></div>
+      <div class="arrow">▼</div>
+      <div class="step"><div class="num"></div><div><h3>Who launched it? (the smart part)</h3><p>It looks at the <b>family tree</b> of the program — who started it. This is what tells a routine task apart from an intruder. (See below.)</p></div></div>
+      <div class="arrow">▼</div>
+      <div class="step"><div class="num"></div><div><h3>You get an alert</h3><p>If it looks dangerous, an alert is raised with a severity, a reason, and the MITRE ATT&amp;CK category — then sent to your log, database, Slack or webhook.</p></div></div>
+    </div>
+  </section>
+
+  <!-- CONTEXT MATTERS -->
+  <section>
+    <h2>🧠 The key idea: <span class="em">context decides everything</span></h2>
+    <p class="lead">The exact same command can be perfectly normal or a serious incident. KernelWatch judges by <b>who launched it</b>, not just what it is. This is what keeps it quiet on normal days and loud during a real attack.</p>
+    <div class="compare">
+      <div class="verdict good">
+        <div class="tag">✓ Normal — stays quiet</div>
+        <div class="cmd">sh -c "php artisan schedule:run"</div>
+        <p style="margin:0;color:var(--muted)">A shell started by your scheduled task. Expected. KernelWatch recognises the trusted parent and stays silent.</p>
+        <div class="chain">Family tree: <b>scheduler → php → sh</b> ✓ trusted</div>
+      </div>
+      <div class="verdict bad">
+        <div class="tag">⚠ Attack — critical alert</div>
+        <div class="cmd">sh -c "id; cat /etc/passwd"</div>
+        <p style="margin:0;color:var(--muted)">The same kind of shell — but started by your public web server. That almost always means someone broke in through the website.</p>
+        <div class="chain">Family tree: <b>nginx → php-fpm → sh</b> ⚠ internet-facing</div>
+      </div>
+    </div>
+    <p style="color:var(--muted);margin-top:14px">Same command. Opposite verdict. That's the difference between a tool that floods you with noise and one you actually trust.</p>
+  </section>
+
+  <!-- SEVERITY -->
+  <section>
+    <h2>🌡️ How serious is it?</h2>
+    <p class="lead">Every alert carries one of four levels, so you know what needs you <i>now</i>.</p>
+    <div class="grid g2">
+      <div class="sev"><span class="dot low"></span><div><span class="name">Low</span> — <span class="desc">worth noting, rarely urgent</span></div></div>
+      <div class="sev"><span class="dot medium"></span><div><span class="name">Medium</span> — <span class="desc">suspicious, review when you can</span></div></div>
+      <div class="sev"><span class="dot high"></span><div><span class="name">High</span> — <span class="desc">likely malicious, look soon</span></div></div>
+      <div class="sev"><span class="dot critical"></span><div><span class="name">Critical</span> — <span class="desc">almost certainly an attack, act now</span></div></div>
+    </div>
+    <p style="color:var(--muted);margin-top:14px">You choose the minimum level you want to hear about. By default you get <b>Medium and above</b>; quieter "Low" events are dropped.</p>
+  </section>
+
+  <!-- WHAT IT CATCHES -->
+  <section>
+    <h2>🎯 What it catches</h2>
+    <p class="lead">The behaviours a healthy production container should never show.</p>
+    <div class="grid g3">
+      <div class="det"><div class="ico">💻</div><h3>A shell appears</h3><p>An interactive shell pops up where there should only be your app — a classic sign of a web hack.</p><span class="ttp">Execution</span></div>
+      <div class="det"><div class="ico">🔑</div><h3>Secrets are read</h3><p>Something reads password files, cloud keys, or <code>.env</code> credentials.</p><span class="ttp">Credential Access</span></div>
+      <div class="det"><div class="ico">📡</div><h3>Network scanning</h3><p>Recon tools like <code>nmap</code> or <code>nc</code> start probing the network.</p><span class="ttp">Discovery</span></div>
+      <div class="det"><div class="ico">⬆️</div><h3>Privilege escalation</h3><p>Tools like <code>sudo</code> or <code>nsenter</code> try to gain more power.</p><span class="ttp">Privilege Escalation</span></div>
+      <div class="det"><div class="ico">📦</div><h3>Software gets installed</h3><p>A package manager runs in a live container — often an attacker bringing in tools.</p><span class="ttp">Execution</span></div>
+      <div class="det"><div class="ico">🐳</div><h3>Docker socket abuse</h3><p>Something reaches for the Docker control socket — a classic container-escape route.</p><span class="ttp">Privilege Escalation</span></div>
+      <div class="det"><div class="ico">📌</div><h3>Persistence</h3><p>Changes to startup files, cron, or SSH keys so malware survives a reboot.</p><span class="ttp">Persistence</span></div>
+      <div class="det"><div class="ico">🕳️</div><h3>Running from temp folders</h3><p>A program launches from a writable, throwaway folder like <code>/tmp</code> — rarely legitimate.</p><span class="ttp">Defense Evasion</span></div>
+      <div class="det"><div class="ico">🔐</div><h3>SSH brute force</h3><p>Repeated failed logins from one address — someone guessing passwords.</p><span class="ttp">Credential Access</span></div>
+    </div>
+  </section>
+
+  <!-- ATTACK CHAIN -->
+  <section>
+    <h2>🔗 Connecting the dots: attack chains</h2>
+    <div class="card">
+      <p style="margin-top:0">Real attacks aren't one event — they're a sequence. A shell opens, then the network is scanned, then secrets are stolen, then something is planted to stay.</p>
+      <p style="margin-bottom:0">KernelWatch watches for these sequences inside the same container. When several suspicious events line up like a real intrusion, it raises <b>one consolidated "attack chain" alert</b> with a risk score — instead of burying you in a dozen separate ones. These are never silenced.</p>
+    </div>
+  </section>
+
+  <!-- DESTINATIONS -->
+  <section>
+    <h2>📬 Where alerts go</h2>
+    <p class="lead">Pick what fits your team. Everything is configured in one simple settings file.</p>
+    <div class="grid g2">
+      <div class="dest"><span class="ico">📄</span><div><b>Log file</b><span>A line per alert, easy to read and keep.</span></div></div>
+      <div class="dest"><span class="ico">🗄️</span><div><b>Database</b><span>Full searchable history of everything that happened.</span></div></div>
+      <div class="dest"><span class="ico">💬</span><div><b>Slack</b><span>A message in your team channel the moment it matters.</span></div></div>
+      <div class="dest"><span class="ico">🔌</span><div><b>Webhook / SIEM</b><span>Feed it into your existing security tooling.</span></div></div>
+    </div>
+    <p class="note" style="margin-top:16px">💡 <b>Good to know:</b> a built-in "monitor" mode lets you run KernelWatch silently for a while first — it records everything but sends nothing — so you can learn what's normal for your setup before turning the alerts on.</p>
+  </section>
+
+  <footer>
+    KernelWatch — eBPF-based intrusion detection for Docker. · This page is a friendly overview;
+    technical details live in the other docs (architecture, configuration, detection rules).
+  </footer>
+
+</div>
+</body>
+</html>

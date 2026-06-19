@@ -4,32 +4,141 @@
 # extend/override it via KW_RULES_FILE / KW_RULES_DIR (append/override semantics);
 # they never need to edit this file or recompile.
 #
-# Condition DSL (Falco-style): and/or/not, comparisons (= != & in contains
+# Condition DSL : and/or/not, comparisons (= != & in contains
 # startswith), $list references, and helpers (in_list, chain_in_list, has_prefix,
 # contains_any, is_trusted_writer, is_docker_client, reverse_shell). The optional
 # per-rule `lineage:` matrix escalates or suppresses by process ancestry.
 
 lists:
-  shells:                    [sh, bash, zsh, fish, dash, ash, ksh, tcsh]
-  net_tools:                 [nmap, masscan, netcat, nc, ncat, socat, tcpdump, wireshark, tshark, curl, wget]
-  high_net_tools:            [nmap, masscan]
-  pkg_managers:              [apt, apt-get, dpkg, yum, dnf, rpm, apk, pip, pip3, npm, yarn, gem]
-  priv_tools:                [sudo, su, nsenter, unshare, chroot, capsh, setuid, newgrp]
-  interactive_benign_priv:   [sudo, su, newgrp]
-  user_mgmt_tools:           [useradd, usermod, userdel, groupadd, groupmod, groupdel, chpasswd, passwd, adduser, deluser, gpasswd]
-  log_tamper_tools:          [shred, wipe, srm]
-  log_history_files:         [wtmp, btmp, lastlog, utmp, auth.log, secure, audit.log, .bash_history, .zsh_history, _history]
-  host_tmp_dirs:             ["/tmp/", "/dev/shm/", "/var/tmp/"]
-  writable_exec_dirs:        ["/tmp/", "/dev/shm/", "/var/tmp/", "/run/"]
-  build_lineage:             [dpkg, apt, apt-get, rpm, yum, dnf, make, gcc, cc, go, cargo, npm, yarn, pip, pip3, cloud-init]
-  sensitive_files:           ["/etc/shadow", "/etc/passwd", "/etc/sudoers", "/root/.ssh", "/var/run/docker.sock", "/.dockerenv", "/proc/sysrq-trigger", "/proc/kcore"]
-  cred_files:                ["/.env", "/.aws/credentials", "/.gcloud/credentials", "/run/secrets", "/.kube/config"]
-  persistence_files:         ["/etc/cron", "/var/spool/cron", "/etc/systemd/", "/lib/systemd/system/", "/usr/lib/systemd/system/", "/etc/init.d/", "/etc/rc.local", "/etc/update-motd.d/", "/etc/profile.d/", "/etc/ld.so.preload", "/etc/ld.so.conf", "/root/.ssh/authorized_keys", "/etc/sudoers.d/", "/etc/passwd", "/etc/shadow"]
-  host_persistence_prefixes: ["/etc/cron", "/var/spool/cron", "/etc/systemd/", "/lib/systemd/system/", "/usr/lib/systemd/system/", "/etc/init.d/", "/etc/rc.local", "/etc/update-motd.d/", "/etc/profile.d/", "/etc/ld.so.preload", "/etc/ld.so.conf", "/etc/ssh/", "/etc/sudoers", "/etc/pam.d/", "/etc/modules-load.d/", "/root/.ssh/authorized_keys"]
+  shells: [sh, bash, zsh, fish, dash, ash, ksh, tcsh]
+  net_tools:
+    [
+      nmap,
+      masscan,
+      netcat,
+      nc,
+      ncat,
+      socat,
+      tcpdump,
+      wireshark,
+      tshark,
+      curl,
+      wget,
+    ]
+  high_net_tools: [nmap, masscan]
+  pkg_managers:
+    [apt, apt-get, dpkg, yum, dnf, rpm, apk, pip, pip3, npm, yarn, gem]
+  priv_tools: [sudo, su, nsenter, unshare, chroot, capsh, setuid, newgrp]
+  interactive_benign_priv: [sudo, su, newgrp]
+  user_mgmt_tools:
+    [
+      useradd,
+      usermod,
+      userdel,
+      groupadd,
+      groupmod,
+      groupdel,
+      chpasswd,
+      passwd,
+      adduser,
+      deluser,
+      gpasswd,
+    ]
+  log_tamper_tools: [shred, wipe, srm]
+  log_history_files:
+    [
+      wtmp,
+      btmp,
+      lastlog,
+      utmp,
+      auth.log,
+      secure,
+      audit.log,
+      .bash_history,
+      .zsh_history,
+      _history,
+    ]
+  host_tmp_dirs: ["/tmp/", "/dev/shm/", "/var/tmp/"]
+  writable_exec_dirs: ["/tmp/", "/dev/shm/", "/var/tmp/", "/run/"]
+  build_lineage:
+    [
+      dpkg,
+      apt,
+      apt-get,
+      rpm,
+      yum,
+      dnf,
+      make,
+      gcc,
+      cc,
+      go,
+      cargo,
+      npm,
+      yarn,
+      pip,
+      pip3,
+      cloud-init,
+    ]
+  sensitive_files:
+    [
+      "/etc/shadow",
+      "/etc/passwd",
+      "/etc/sudoers",
+      "/root/.ssh",
+      "/var/run/docker.sock",
+      "/.dockerenv",
+      "/proc/sysrq-trigger",
+      "/proc/kcore",
+    ]
+  cred_files:
+    [
+      "/.env",
+      "/.aws/credentials",
+      "/.gcloud/credentials",
+      "/run/secrets",
+      "/.kube/config",
+    ]
+  persistence_files:
+    [
+      "/etc/cron",
+      "/var/spool/cron",
+      "/etc/systemd/",
+      "/lib/systemd/system/",
+      "/usr/lib/systemd/system/",
+      "/etc/init.d/",
+      "/etc/rc.local",
+      "/etc/update-motd.d/",
+      "/etc/profile.d/",
+      "/etc/ld.so.preload",
+      "/etc/ld.so.conf",
+      "/root/.ssh/authorized_keys",
+      "/etc/sudoers.d/",
+      "/etc/passwd",
+      "/etc/shadow",
+    ]
+  host_persistence_prefixes:
+    [
+      "/etc/cron",
+      "/var/spool/cron",
+      "/etc/systemd/",
+      "/lib/systemd/system/",
+      "/usr/lib/systemd/system/",
+      "/etc/init.d/",
+      "/etc/rc.local",
+      "/etc/update-motd.d/",
+      "/etc/profile.d/",
+      "/etc/ld.so.preload",
+      "/etc/ld.so.conf",
+      "/etc/ssh/",
+      "/etc/sudoers",
+      "/etc/pam.d/",
+      "/etc/modules-load.d/",
+      "/root/.ssh/authorized_keys",
+    ]
   host_persistence_substrings: ["/.ssh/authorized_keys"]
 
 macros:
-  is_execve:    "evt.type = execve"
+  is_execve: "evt.type = execve"
   spawns_shell: "is_execve and in_list(proc.exe_base, $shells)"
 
 rules:
@@ -217,11 +326,13 @@ rules:
         and: "scope = host"
         severity: critical
         reason: "package manager spawned by network-facing service (attacker installing tools)"
-        details: { package_manager: proc.exe_base, spawned_by: lineage.network_parent }
+        details:
+          { package_manager: proc.exe_base, spawned_by: lineage.network_parent }
       - when: network
         severity: high
         reason: "package manager spawned by network-facing service (attacker installing tools)"
-        details: { package_manager: proc.exe_base, spawned_by: lineage.network_parent }
+        details:
+          { package_manager: proc.exe_base, spawned_by: lineage.network_parent }
       - when: any
         and: "scope = host"
         action: suppress

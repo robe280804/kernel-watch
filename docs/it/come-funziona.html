@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KernelWatch — Come funziona</title>
+  <style>
+    :root {
+      --bg: #0f1420;
+      --panel: #161d2e;
+      --panel2: #1d2638;
+      --ink: #e8edf6;
+      --muted: #9aa7bd;
+      --line: #2a3550;
+      --brand: #4f8cff;
+      --brand2: #7c5cff;
+      --low: #5b8def;
+      --medium: #e0a33e;
+      --high: #e8743b;
+      --critical: #e0455e;
+      --ok: #3ec98a;
+      --radius: 14px;
+      --shadow: 0 8px 30px rgba(0, 0, 0, .35);
+      font-synthesis: none;
+    }
+
+    * {
+      box-sizing: border-box
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 20px 80px
+    }
+
+    a {
+      color: var(--brand)
+    }
+
+    code {
+      background: #0b0f18;
+      border: 1px solid var(--line);
+      padding: .12em .45em;
+      border-radius: 6px;
+      font-size: .9em;
+      color: #cdd9f0
+    }
+
+    header.hero {
+      background: radial-gradient(1200px 400px at 70% -10%, rgba(124, 92, 255, .35), transparent 60%),
+        radial-gradient(900px 400px at 10% 0%, rgba(79, 140, 255, .30), transparent 55%),
+        var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 64px 20px 56px;
+      text-align: center;
+    }
+
+    .hero .lang {
+      position: absolute;
+      top: 18px;
+      right: 24px;
+      font-size: .85rem;
+      color: var(--muted)
+    }
+
+    .hero .lang a {
+      margin-left: 10px
+    }
+
+    .badge-top {
+      display: inline-block;
+      font-size: .78rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #bcd0ff;
+      background: rgba(79, 140, 255, .15);
+      border: 1px solid rgba(79, 140, 255, .4);
+      padding: 6px 14px;
+      border-radius: 999px;
+      margin-bottom: 18px
+    }
+
+    .hero h1 {
+      font-size: 2.6rem;
+      margin: 0 0 12px;
+      letter-spacing: -.02em
+    }
+
+    .hero p {
+      font-size: 1.2rem;
+      color: var(--muted);
+      max-width: 660px;
+      margin: 0 auto
+    }
+
+    section {
+      margin-top: 48px
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      margin: 0 0 6px;
+      letter-spacing: -.01em
+    }
+
+    h2 .em {
+      color: var(--brand)
+    }
+
+    .lead {
+      color: var(--muted);
+      margin: 0 0 22px
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 22px 24px;
+      box-shadow: var(--shadow)
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px
+    }
+
+    .g2 {
+      grid-template-columns: repeat(2, 1fr)
+    }
+
+    .g3 {
+      grid-template-columns: repeat(3, 1fr)
+    }
+
+    @media(max-width:720px) {
+
+      .g2,
+      .g3 {
+        grid-template-columns: 1fr
+      }
+    }
+
+    .oneliner {
+      font-size: 1.25rem;
+      line-height: 1.7
+    }
+
+    .oneliner b {
+      color: #fff
+    }
+
+    .flow {
+      counter-reset: step;
+      display: grid;
+      gap: 14px
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 16px;
+      align-items: start;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px 20px
+    }
+
+    .step .num {
+      counter-increment: step;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--brand), var(--brand2));
+      color: #fff;
+      font-weight: 700;
+      font-size: 1.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center
+    }
+
+    .step .num::before {
+      content: counter(step)
+    }
+
+    .step h3 {
+      margin: 2px 0 4px;
+      font-size: 1.05rem
+    }
+
+    .step p {
+      margin: 0;
+      color: var(--muted)
+    }
+
+    .arrow {
+      text-align: center;
+      color: var(--line);
+      font-size: 1.4rem;
+      line-height: .4
+    }
+
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px
+    }
+
+    @media(max-width:720px) {
+      .compare {
+        grid-template-columns: 1fr
+      }
+    }
+
+    .verdict {
+      border-radius: var(--radius);
+      padding: 20px 22px;
+      border: 1px solid var(--line)
+    }
+
+    .verdict.good {
+      background: rgba(62, 201, 138, .08);
+      border-color: rgba(62, 201, 138, .4)
+    }
+
+    .verdict.bad {
+      background: rgba(224, 69, 94, .08);
+      border-color: rgba(224, 69, 94, .45)
+    }
+
+    .verdict .tag {
+      font-weight: 700;
+      font-size: .8rem;
+      letter-spacing: .08em;
+      text-transform: uppercase
+    }
+
+    .verdict.good .tag {
+      color: var(--ok)
+    }
+
+    .verdict.bad .tag {
+      color: var(--critical)
+    }
+
+    .verdict .cmd {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      background: #0b0f18;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 12px 0;
+      font-size: .9rem;
+      color: #cdd9f0;
+      overflow-x: auto
+    }
+
+    .chain {
+      font-size: .86rem;
+      color: var(--muted);
+      margin-top: 8px
+    }
+
+    .chain b {
+      color: var(--ink)
+    }
+
+    .sev {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel2)
+    }
+
+    .dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      flex: 0 0 auto
+    }
+
+    .dot.low {
+      background: var(--low)
+    }
+
+    .dot.medium {
+      background: var(--medium)
+    }
+
+    .dot.high {
+      background: var(--high)
+    }
+
+    .dot.critical {
+      background: var(--critical)
+    }
+
+    .sev .name {
+      font-weight: 700
+    }
+
+    .sev .desc {
+      color: var(--muted);
+      font-size: .92rem
+    }
+
+    .det {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px 20px
+    }
+
+    .det .ico {
+      font-size: 1.6rem
+    }
+
+    .det h3 {
+      margin: 8px 0 4px;
+      font-size: 1.05rem
+    }
+
+    .det p {
+      margin: 0;
+      color: var(--muted);
+      font-size: .92rem
+    }
+
+    .det .ttp {
+      display: inline-block;
+      margin-top: 10px;
+      font-size: .74rem;
+      color: #bcd0ff;
+      background: rgba(79, 140, 255, .12);
+      border: 1px solid rgba(79, 140, 255, .3);
+      padding: 3px 8px;
+      border-radius: 6px
+    }
+
+    .dest {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      padding: 14px 16px;
+      background: var(--panel2);
+      border: 1px solid var(--line);
+      border-radius: 10px
+    }
+
+    .dest .ico {
+      font-size: 1.5rem
+    }
+
+    .dest b {
+      display: block
+    }
+
+    .dest span {
+      color: var(--muted);
+      font-size: .9rem
+    }
+
+    .note {
+      background: rgba(224, 163, 62, .08);
+      border: 1px solid rgba(224, 163, 62, .4);
+      border-radius: 10px;
+      padding: 14px 16px;
+      color: #f0dcb4;
+      font-size: .94rem
+    }
+
+    footer {
+      margin-top: 60px;
+      padding-top: 24px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: .88rem;
+      text-align: center
+    }
+  </style>
+</head>
+
+<body>
+
+  <header class="hero">
+    <div class="lang">🌐 <a href="come-funziona.html">IT</a> · <a href="../en/how-it-works.html">EN</a></div>
+    <div class="badge-top">🛡️ Sicurezza resa visibile</div>
+    <h1>KernelWatch</h1>
+    <p>Il guardiano silenzioso che sorveglia i tuoi container Docker dall'interno del kernel Linux — e ti avvisa
+      nell'istante in cui uno di loro inizia a comportarsi come se fosse stato violato.</p>
+  </header>
+
+  <div class="wrap">
+
+    <!-- IN UNA FRASE -->
+    <section>
+      <div class="card oneliner">
+        KernelWatch osserva ciò che ogni programma <b>fa davvero</b> sul tuo server — non ciò che
+        <i>dichiara</i> di fare. Quando un container all'improvviso apre una shell, legge un file di password,
+        scansiona la rete o installa nuovi strumenti, KernelWatch se ne accorge in <b>tempo reale</b> e genera
+        un alert con una gravità chiara e una spiegazione in parole semplici.
+      </div>
+    </section>
+
+    <!-- DA DOVE OSSERVA -->
+    <section>
+      <h2>👀 Da dove osserva</h2>
+      <p class="lead">Il trucco che lo rende potente — e impossibile da aggirare.</p>
+      <div class="grid g3">
+        <div class="det">
+          <div class="ico">🧩</div>
+          <h3>Niente dentro i tuoi container</h3>
+          <p>Non installi nulla nelle tue applicazioni. Un solo guardiano gira sull'host. I tuoi container restano
+            intatti.</p>
+        </div>
+        <div class="det">
+          <div class="ico">🔬</div>
+          <h3>Ascolta nel kernel</h3>
+          <p>Ogni azione di un programma (aprire un file, lanciare un comando, connettersi) passa dal kernel Linux.
+            KernelWatch ascolta esattamente lì.</p>
+        </div>
+        <div class="det">
+          <div class="ico">🥷</div>
+          <h3>Un attaccante non può spegnerlo</h3>
+          <p>Anche se qualcuno prende il controllo di un container, non può vedere né disattivare un monitor che vive
+            sotto di lui, nel kernel.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- IL VIAGGIO -->
+    <section>
+      <h2>🚦 Il viaggio di un singolo evento</h2>
+      <p class="lead">Da "un programma ha fatto qualcosa" a "ricevi un alert" — in millisecondi.</p>
+      <div class="flow">
+        <div class="step">
+          <div class="num"></div>
+          <div>
+            <h3>Succede qualcosa</h3>
+            <p>Un programma in un container lancia un comando, apre un file o apre una connessione di rete.</p>
+          </div>
+        </div>
+        <div class="arrow">▼</div>
+        <div class="step">
+          <div class="num"></div>
+          <div>
+            <h3>Il kernel lo segnala</h3>
+            <p>KernelWatch viene avvisato all'istante, senza ritardi e senza perdere eventi.</p>
+          </div>
+        </div>
+        <div class="arrow">▼</div>
+        <div class="step">
+          <div class="num"></div>
+          <div>
+            <h3>Da quale container arriva?</h3>
+            <p>Capisce da quale container proviene l'azione. Le azioni sull'host stesso vengono ignorate, a meno che tu
+              non attivi il monitoraggio host.</p>
+          </div>
+        </div>
+        <div class="arrow">▼</div>
+        <div class="step">
+          <div class="num"></div>
+          <div>
+            <h3>Chi l'ha lanciato? (la parte intelligente)</h3>
+            <p>Guarda l'<b>albero genealogico</b> del programma — chi lo ha avviato. È questo che distingue un'attività
+              di routine da un intruso. (Vedi sotto.)</p>
+          </div>
+        </div>
+        <div class="arrow">▼</div>
+        <div class="step">
+          <div class="num"></div>
+          <div>
+            <h3>Ricevi un alert</h3>
+            <p>Se sembra pericoloso, viene generato un alert con gravità, motivo e categoria MITRE ATT&amp;CK — e
+              inviato al tuo log, database, Slack o webhook.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- IL CONTESTO -->
+    <section>
+      <h2>🧠 L'idea chiave: <span class="em">il contesto decide tutto</span></h2>
+      <p class="lead">Lo stesso identico comando può essere perfettamente normale o un grave incidente. KernelWatch
+        giudica in base a <b>chi l'ha lanciato</b>, non solo a cosa sia. È questo che lo tiene silenzioso nei giorni
+        normali e rumoroso durante un vero attacco.</p>
+      <div class="compare">
+        <div class="verdict good">
+          <div class="tag">✓ Normale — resta in silenzio</div>
+          <div class="cmd">sh -c "php artisan schedule:run"</div>
+          <p style="margin:0;color:var(--muted)">Una shell avviata dal tuo task pianificato. È previsto. KernelWatch
+            riconosce il genitore fidato e tace.</p>
+          <div class="chain">Albero: <b>scheduler → php → sh</b> ✓ fidato</div>
+        </div>
+        <div class="verdict bad">
+          <div class="tag">⚠ Attacco — alert critico</div>
+          <div class="cmd">sh -c "id; cat /etc/passwd"</div>
+          <p style="margin:0;color:var(--muted)">Lo stesso tipo di shell — ma avviata dal tuo server web pubblico. Quasi
+            sempre significa che qualcuno è entrato attraverso il sito.</p>
+          <div class="chain">Albero: <b>nginx → php-fpm → sh</b> ⚠ esposto a internet</div>
+        </div>
+      </div>
+      <p style="color:var(--muted);margin-top:14px">Stesso comando. Verdetto opposto. È la differenza tra uno strumento
+        che ti inonda di rumore e uno di cui ti fidi davvero.</p>
+    </section>
+
+    <!-- GRAVITÀ -->
+    <section>
+      <h2>🌡️ Quanto è grave?</h2>
+      <p class="lead">Ogni alert porta uno di quattro livelli, così sai cosa richiede la tua attenzione <i>adesso</i>.
+      </p>
+      <div class="grid g2">
+        <div class="sev"><span class="dot low"></span>
+          <div><span class="name">Bassa</span> — <span class="desc">da annotare, raramente urgente</span></div>
+        </div>
+        <div class="sev"><span class="dot medium"></span>
+          <div><span class="name">Media</span> — <span class="desc">sospetto, controlla quando puoi</span></div>
+        </div>
+        <div class="sev"><span class="dot high"></span>
+          <div><span class="name">Alta</span> — <span class="desc">probabilmente malevolo, guarda presto</span></div>
+        </div>
+        <div class="sev"><span class="dot critical"></span>
+          <div><span class="name">Critica</span> — <span class="desc">quasi certamente un attacco, agisci subito</span>
+          </div>
+        </div>
+      </div>
+      <p style="color:var(--muted);margin-top:14px">Scegli tu il livello minimo di cui vuoi essere avvisato. Di default
+        ricevi <b>Media e superiori</b>; gli eventi più tranquilli ("Bassa") vengono scartati.</p>
+    </section>
+
+    <!-- COSA RILEVA -->
+    <section>
+      <h2>🎯 Cosa rileva</h2>
+      <p class="lead">I comportamenti che un container di produzione sano non dovrebbe mai mostrare.</p>
+      <div class="grid g3">
+        <div class="det">
+          <div class="ico">💻</div>
+          <h3>Appare una shell</h3>
+          <p>Spunta una shell interattiva dove dovrebbe esserci solo la tua app — un classico segno di violazione web.
+          </p><span class="ttp">Esecuzione</span>
+        </div>
+        <div class="det">
+          <div class="ico">🔑</div>
+          <h3>Vengono letti i segreti</h3>
+          <p>Qualcosa legge file di password, chiavi cloud o credenziali <code>.env</code>.</p><span class="ttp">Accesso
+            alle credenziali</span>
+        </div>
+        <div class="det">
+          <div class="ico">📡</div>
+          <h3>Scansione di rete</h3>
+          <p>Strumenti di ricognizione come <code>nmap</code> o <code>nc</code> iniziano a sondare la rete.</p><span
+            class="ttp">Discovery</span>
+        </div>
+        <div class="det">
+          <div class="ico">⬆️</div>
+          <h3>Scalata dei privilegi</h3>
+          <p>Strumenti come <code>sudo</code> o <code>nsenter</code> cercano di ottenere più potere.</p><span
+            class="ttp">Privilege Escalation</span>
+        </div>
+        <div class="det">
+          <div class="ico">📦</div>
+          <h3>Viene installato software</h3>
+          <p>Un gestore di pacchetti gira in un container attivo — spesso un attaccante che porta i suoi strumenti.</p>
+          <span class="ttp">Esecuzione</span>
+        </div>
+        <div class="det">
+          <div class="ico">🐳</div>
+          <h3>Abuso del socket Docker</h3>
+          <p>Qualcosa cerca di raggiungere il socket di controllo Docker — una classica via di fuga dal container.</p>
+          <span class="ttp">Privilege Escalation</span>
+        </div>
+        <div class="det">
+          <div class="ico">📌</div>
+          <h3>Persistenza</h3>
+          <p>Modifiche a file di avvio, cron o chiavi SSH per far sopravvivere il malware a un riavvio.</p><span
+            class="ttp">Persistenza</span>
+        </div>
+        <div class="det">
+          <div class="ico">🕳️</div>
+          <h3>Esecuzione da cartelle temporanee</h3>
+          <p>Un programma parte da una cartella scrivibile e usa-e-getta come <code>/tmp</code> — raramente legittimo.
+          </p><span class="ttp">Defense Evasion</span>
+        </div>
+        <div class="det">
+          <div class="ico">🔐</div>
+          <h3>Brute force SSH</h3>
+          <p>Tentativi di login falliti ripetuti dallo stesso indirizzo — qualcuno che indovina le password.</p><span
+            class="ttp">Accesso alle credenziali</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- CATENA D'ATTACCO -->
+    <section>
+      <h2>🔗 Unire i puntini: le catene d'attacco</h2>
+      <div class="card">
+        <p style="margin-top:0">I veri attacchi non sono un singolo evento — sono una sequenza. Si apre una shell, poi
+          si scansiona la rete, poi si rubano segreti, poi si pianta qualcosa per restare.</p>
+        <p style="margin-bottom:0">KernelWatch cerca queste sequenze all'interno dello stesso container. Quando più
+          eventi sospetti si allineano come una vera intrusione, genera <b>un unico alert "catena d'attacco"</b> con un
+          punteggio di rischio — invece di sommergerti di decine di alert separati. Questi non vengono mai silenziati.
+        </p>
+      </div>
+    </section>
+
+    <!-- DESTINAZIONI -->
+    <section>
+      <h2>📬 Dove finiscono gli alert</h2>
+      <p class="lead">Scegli ciò che si adatta al tuo team. Tutto si configura in un unico semplice file di
+        impostazioni.</p>
+      <div class="grid g2">
+        <div class="dest"><span class="ico">📄</span>
+          <div><b>File di log</b><span>Una riga per alert, facile da leggere e conservare.</span></div>
+        </div>
+        <div class="dest"><span class="ico">🗄️</span>
+          <div><b>Database</b><span>Storico completo e ricercabile di tutto ciò che è successo.</span></div>
+        </div>
+        <div class="dest"><span class="ico">💬</span>
+          <div><b>Slack</b><span>Un messaggio nel canale del team nel momento in cui conta.</span></div>
+        </div>
+        <div class="dest"><span class="ico">🔌</span>
+          <div><b>Webhook / SIEM</b><span>Integralo nei tuoi strumenti di sicurezza esistenti.</span></div>
+        </div>
+      </div>
+      <p class="note" style="margin-top:16px">💡 <b>Buono a sapersi:</b> una modalità "monitor" integrata ti permette di
+        far girare KernelWatch in silenzio per un po' all'inizio — registra tutto ma non invia nulla — così puoi
+        imparare cos'è normale per la tua configurazione prima di attivare gli alert.</p>
+    </section>
+
+    <footer>
+      KernelWatch — rilevamento intrusioni basato su eBPF per Docker. · Questa pagina è una panoramica
+      amichevole; i dettagli tecnici sono nelle altre guide (architettura, configurazione, regole di rilevamento).
+    </footer>
+
+  </div>
+</body>
+
+</html>  
