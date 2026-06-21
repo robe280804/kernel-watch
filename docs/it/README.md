@@ -21,6 +21,7 @@ non può disattivarlo dall'interno.
 | [configuration.md](configuration.md) | Ogni variabile d'ambiente `KW_*`, valori di default e regole di validazione. |
 | [detection-rules.md](detection-rules.md) | Le 6 regole di detection, cosa le attiva, severità e mappatura MITRE ATT&CK. |
 | [deployment.md](deployment.md) | Deploy con Docker / Docker Compose, capability richieste, build da sorgente. |
+| [dashboard.md](dashboard.md) | La dashboard web opzionale: come abilitarla, come accedervi (tunnel SSH / reverse proxy) e cosa puoi farci (statistiche, alert, soppressioni). |
 | [development.md](development.md) | Build locale, generazione del codice eBPF, come aggiungere una regola o un hook syscall. |
 | [roadmap.md](roadmap.md) | Roadmap, limitazioni note, stub e bug da tenere presenti. |
 

@@ -21,6 +21,7 @@ container cannot disable it from within.
 | [configuration.md](configuration.md) | Every `KW_*` environment variable, defaults, and validation rules. |
 | [detection-rules.md](detection-rules.md) | The 6 detection rules, what triggers them, severities and MITRE ATT&CK mapping. |
 | [deployment.md](deployment.md) | Docker / Docker Compose deployment, required capabilities, build from source. |
+| [dashboard.md](dashboard.md) | The optional web dashboard: enabling it, accessing it (SSH tunnel / reverse proxy), and what you can do (stats, alerts, suppressions). |
 | [development.md](development.md) | Local build, eBPF code generation, how to add a new rule or syscall hook. |
 | [roadmap.md](roadmap.md) | Roadmap, known limitations, stubs and bugs to be aware of. |
 
