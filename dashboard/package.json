@@ -1,0 +1,26 @@
+{
+  "name": "kernelwatch-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web dashboard for the KernelWatch REST API (alerts, incidents, suppressions).",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "15.5.19",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "15.5.19",
+    "typescript": "^5.7.0"
+  }
+}

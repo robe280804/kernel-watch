@@ -207,7 +207,8 @@ kernelwatch/
 - [x] Operator false-positive suppression
 - [x] ECS output for SIEM ingestion
 - [x] REST API (alerts / stats / suppressions)
-- [ ] WebSocket live alert stream + dashboard UI
+- [x] Web dashboard UI (alerts, stats, suppressions) — see [`dashboard/`](dashboard/)
+- [ ] WebSocket live alert stream
 - [ ] Static profiler (pre-deploy image analysis with syft)
 - [ ] Per-container behavioral baseline (ML autoencoder)
 - [ ] Kubernetes DaemonSet support

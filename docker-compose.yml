@@ -83,6 +83,43 @@ services:
       retries: 3
       start_period: 20s
 
+  # ── Dashboard (web UI over the REST API) ────────────────────────────────────
+  # A Next.js app whose server-side routes hold KW_API_TOKEN and proxy the
+  # KernelWatch REST API (so the token never reaches the browser). Requires
+  # KW_API_ENABLED=true on the daemon.
+  dashboard:
+    build: ./dashboard
+    image: kernelwatch-dashboard:latest
+    container_name: kernelwatch-dashboard
+    restart: unless-stopped
+
+    mem_limit: 256m
+
+    # Host networking: the kernelwatch API binds 127.0.0.1:8080, which is only
+    # reachable from the host network namespace. The dashboard joins it and
+    # reaches the API over loopback. HOSTNAME=127.0.0.1 binds the dashboard to
+    # loopback too, so the UI is NOT exposed on the host's public interfaces.
+    # Front it with a reverse proxy + TLS if you need remote access.
+    network_mode: host
+
+    environment:
+      - KW_API_URL=${KW_API_URL:-http://127.0.0.1:8080}
+      - KW_API_TOKEN=${KW_API_TOKEN}
+      - HOSTNAME=127.0.0.1
+      - PORT=${DASHBOARD_PORT:-3000}
+
+    depends_on:
+      - kernelwatch
+
+    healthcheck:
+      # The Next server answers any route; hit the lightweight overview.
+      test:
+        ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   # ── TimescaleDB (events storage) ────────────────────────────────────────────
   db:
     image: timescale/timescaledb:latest-pg16

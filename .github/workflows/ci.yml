@@ -39,3 +39,30 @@ jobs:
         run: go test -race ./...
         env:
           GOFLAGS: -mod=mod
+
+  # Dashboard (Next.js) — independent of the Go job so the daemon pipeline is
+  # unaffected. Lints and builds the UI to catch type/build regressions.
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install
+        run: npm ci || npm install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"

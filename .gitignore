@@ -58,3 +58,11 @@ Thumbs.db
 
 # Local planning notes (not tracked)
 /feat/
+
+# Dashboard (Next.js) build artifacts & deps
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+dashboard/next-env.d.ts
+dashboard/.env*
+!dashboard/.env.example

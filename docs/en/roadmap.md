@@ -51,7 +51,7 @@ These were blocking a working build/run and have been fixed in-repo:
 | Area | State | Detail |
 |---|---|---|
 | REST API | Not implemented | `KW_API_PORT`/`KW_API_TOKEN` exist; no HTTP server or handlers. |
-| Dashboard (WebSocket) | Not implemented | Roadmap only. |
+| Dashboard | Done (read + suppressions) | Next.js UI in `dashboard/` over the REST API; optional `dashboard` compose service. Live WebSocket stream still pending. |
 | DB persistence | Done (alerts) | `internal/storage` writes alerts to a TimescaleDB hypertable (async, resilient) with retention. Raw-event storage still out of scope. |
 | Docker enrichment | Done | `internal/container/docker.go` resolves real name/image via the Docker socket; falls back to short ID if unreachable. |
 | Ring-buffer sizing | No-op | `KW_EBPF_RINGBUF_SIZE` is loaded but not applied at eBPF load. |

@@ -53,7 +53,7 @@ Bloccavano una build/esecuzione funzionante e sono state corrette nel repo:
 | Area | Stato | Dettaglio |
 |---|---|---|
 | REST API | Non implementata | `KW_API_PORT`/`KW_API_TOKEN` esistono; nessun server o handler HTTP. |
-| Dashboard (WebSocket) | Non implementata | Solo roadmap. |
+| Dashboard | Fatta (lettura + soppressioni) | UI Next.js in `dashboard/` sopra la REST API; servizio compose `dashboard` opzionale. Stream WebSocket live ancora da fare. |
 | Persistenza DB | Non implementata | `Config.DSN()` pronto; nessuna connessione, schema o insert. |
 | Arricchimento Docker | Stub | `dockerInspect()` restituisce sempre "not implemented"; nome = short ID, immagine = vuota. |
 | Dimensionamento ring buffer | Inattivo | `KW_EBPF_RINGBUF_SIZE` è caricata ma non applicata al load eBPF. |
